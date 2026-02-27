@@ -123,18 +123,17 @@ class TestCG:
         Ax = dia_spmv(A, x_sol)
         np.testing.assert_allclose(Ax, f, atol=1e-8)
 
-    def test_cg_converges_monotonically(self):
-        """Residual norms should decrease (for SPD system)."""
+    def test_cg_converges(self):
+        """CG should converge: final residual much smaller than initial."""
         N = 30
         A = laplacian_1d_dia(N)
         A_fn = lambda v: dia_spmv(A, v)
         f = np.ones(N)
 
         _, _, residuals = cg_solve(A_fn, f, tol=1e-12, max_iter=200)
-        # CG residuals should generally decrease (monotone for exact arithmetic)
-        # Allow some floating-point noise
-        for k in range(1, min(len(residuals), 10)):
-            assert residuals[k] <= residuals[0] * 1.1
+        # CG 2-norm of residual is NOT monotone, but must converge
+        assert residuals[-1] < 1e-10
+        assert residuals[-1] < residuals[0] * 1e-6
 
 
 class TestMixedPrecisionCG:
