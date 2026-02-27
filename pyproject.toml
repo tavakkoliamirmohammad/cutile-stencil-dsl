@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "cutile-stencil"
+version = "0.1.0"
+description = "High-order stencil compilation and tile-based iterative solvers via cuTile"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
