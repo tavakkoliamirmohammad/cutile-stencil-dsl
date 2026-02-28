@@ -7,10 +7,12 @@ operation (SpMV, axpy, dot, norm) — 7 launches per iteration.
 from __future__ import annotations
 
 from cutile_stencil.codegen.emitter import CodeEmitter
+from cutile_stencil.config import SolverConfig, DEFAULT_SOLVER
 
 
-def generate_cg_driver() -> str:
+def generate_cg_driver(solver_config: SolverConfig | None = None) -> str:
     """Generate cuTile CG driver Python file."""
+    cfg = solver_config or DEFAULT_SOLVER
     e = CodeEmitter()
     e.line('"""Standard CG solver using cuTile kernels (auto-generated).')
     e.line("")
@@ -31,7 +33,7 @@ def generate_cg_driver() -> str:
 
     # CG driver
     e.blank()
-    e.line("def cg_solve(spmv_fn, b, x0, tol=1e-10, max_iter=1000, tile_size=256):")
+    e.line(f"def cg_solve(spmv_fn, b, x0, tol={cfg.cg_tol}, max_iter={cfg.cg_max_iter}, tile_size={cfg.tile_size}):")
     with e.indent():
         e.line('"""Solve Ax = b with CG. spmv_fn(x, out) computes out = A @ x."""')
         e.line("N = b.shape[0]")

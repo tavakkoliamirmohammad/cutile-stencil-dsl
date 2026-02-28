@@ -3,3 +3,6 @@
 from cutile_stencil.dsl.decorator import stencil
 from cutile_stencil.dsl.types import StencilSpec, HardwareSpec, TileConfig, RooflineResult
 from cutile_stencil.dsl.registry import register, lookup, all_stencils
+from cutile_stencil.dsl.boundary import BoundaryType, BoundaryCondition, BoundarySpec
+from cutile_stencil.dsl.pipeline import analyze, AnalysisResult
+from cutile_stencil.config import GPU_PRESETS

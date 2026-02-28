@@ -11,6 +11,7 @@ dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+benchmark = ["numba>=0.58", "tabulate>=0.9"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

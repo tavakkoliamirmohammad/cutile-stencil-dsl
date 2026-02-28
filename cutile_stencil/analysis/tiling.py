@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import itertools
 import math
-from typing import Tuple
+from typing import List, Optional, Tuple
 
 from cutile_stencil.dsl.types import HardwareSpec, StencilSpec, TileConfig
 
@@ -36,62 +37,49 @@ def compute_tile_config(
     spec: StencilSpec,
     domain_size: Tuple[int, ...],
     hw: HardwareSpec | None = None,
+    candidate_sizes: List[int] | None = None,
 ) -> TileConfig:
     """Find optimal power-of-2 tile sizes that fit in shared memory.
 
-    Enumerates candidate tile sizes from 32 up to the domain extent,
+    Enumerates candidate tile sizes via N-dimensional product,
     picks the configuration that minimises halo overhead while fitting
     in the shared-memory budget.
+
+    Parameters
+    ----------
+    spec : StencilSpec
+        Stencil specification with ndim and halo info.
+    domain_size : tuple of int
+        Domain extents per dimension.
+    hw : HardwareSpec, optional
+        GPU hardware parameters. Defaults to HardwareSpec().
+    candidate_sizes : list of int, optional
+        Tile size candidates to enumerate. Defaults to [32, 64, 128, 256, 512, 1024].
     """
     if hw is None:
         hw = HardwareSpec()
+
+    if candidate_sizes is None:
+        candidate_sizes = [32, 64, 128, 256, 512, 1024]
 
     ndim = spec.ndim
     halo = spec.halo_widths or (spec.order // 2,) * ndim
     budget = hw.shared_mem_bytes
     num_arrays = len(spec.inputs) + 1  # inputs + output
 
-    candidates = [32, 64, 128, 256, 512, 1024]
-
     best: TileConfig | None = None
     best_overhead = float("inf")
 
-    if ndim == 1:
-        for ts in candidates:
-            tile = (ts,)
-            mem = _tile_memory(tile, halo, hw.dtype_bytes, num_arrays)
-            if mem <= budget:
-                oh = _overhead(tile, halo)
-                if oh < best_overhead:
-                    best_overhead = oh
-                    nt = (math.ceil(domain_size[0] / ts),)
-                    best = TileConfig(tile, halo, nt, oh)
-    elif ndim == 2:
-        for tx in candidates:
-            for ty in candidates:
-                tile = (tx, ty)
-                mem = _tile_memory(tile, halo, hw.dtype_bytes, num_arrays)
-                if mem <= budget:
-                    oh = _overhead(tile, halo)
-                    if oh < best_overhead:
-                        best_overhead = oh
-                        nt = (math.ceil(domain_size[0] / tx),
-                              math.ceil(domain_size[1] / ty))
-                        best = TileConfig(tile, halo, nt, oh)
-    else:  # 3D
-        for tx in candidates:
-            for ty in candidates:
-                for tz in candidates:
-                    tile = (tx, ty, tz)
-                    mem = _tile_memory(tile, halo, hw.dtype_bytes, num_arrays)
-                    if mem <= budget:
-                        oh = _overhead(tile, halo)
-                        if oh < best_overhead:
-                            best_overhead = oh
-                            nt = (math.ceil(domain_size[0] / tx),
-                                  math.ceil(domain_size[1] / ty),
-                                  math.ceil(domain_size[2] / tz))
-                            best = TileConfig(tile, halo, nt, oh)
+    # Unified N-dim enumeration via itertools.product
+    for combo in itertools.product(candidate_sizes, repeat=ndim):
+        tile = combo
+        mem = _tile_memory(tile, halo, hw.dtype_bytes, num_arrays)
+        if mem <= budget:
+            oh = _overhead(tile, halo)
+            if oh < best_overhead:
+                best_overhead = oh
+                nt = tuple(math.ceil(d / t) for d, t in zip(domain_size, tile))
+                best = TileConfig(tile, halo, nt, oh)
 
     if best is None:
         # Fallback: smallest possible tile

@@ -14,13 +14,16 @@ def compute_temporal_config(
     spec: StencilSpec,
     tile_cfg: TileConfig,
     hw: HardwareSpec | None = None,
-    max_steps: int = 16,
+    max_steps: int | None = None,
 ) -> TemporalConfig:
     """Find the largest temporal blocking factor T such that the expanded
     tile ``(tile + 2*T*halo)^ndim * dtype_bytes`` still fits in shared memory.
     """
     if hw is None:
         hw = HardwareSpec()
+
+    if max_steps is None:
+        max_steps = 16
 
     halo = tile_cfg.halo_widths
     tile = tile_cfg.tile_sizes

@@ -8,10 +8,12 @@ pass pattern for atomic synchronization.
 from __future__ import annotations
 
 from cutile_stencil.codegen.emitter import CodeEmitter
+from cutile_stencil.config import SolverConfig, DEFAULT_SOLVER
 
 
-def generate_persistent_cg() -> str:
+def generate_persistent_cg(solver_config: SolverConfig | None = None) -> str:
     """Generate a persistent CG kernel that runs the entire solve in one launch."""
+    cfg = solver_config or DEFAULT_SOLVER
     e = CodeEmitter()
     e.line('"""Persistent single-kernel CG solver (auto-generated).')
     e.line("")
@@ -119,8 +121,8 @@ def generate_persistent_cg() -> str:
         e.line("r = b.clone()  # Initial: r = b (assuming x0 = 0)")
         e.line("p = r.clone()")
         e.line("Ap = torch.zeros_like(x)")
-        e.line("scalars = torch.zeros(4, dtype=x.dtype, device=x.device)")
-        e.line("locks = torch.zeros(4, dtype=torch.int32, device=x.device)")
+        e.line(f"scalars = torch.zeros({cfg.persistent_spinlock_size}, dtype=x.dtype, device=x.device)")
+        e.line(f"locks = torch.zeros({cfg.persistent_spinlock_size}, dtype=torch.int32, device=x.device)")
         e.line("stream = torch.cuda.current_stream()")
         e.line("grid = (num_sms,)")
         e.line("ct.launch(stream, grid, persistent_cg_kernel, (")

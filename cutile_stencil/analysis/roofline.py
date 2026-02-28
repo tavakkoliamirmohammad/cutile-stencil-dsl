@@ -21,6 +21,8 @@ class _FlopCounter(ast.NodeVisitor):
         self.adds = 0
         self.muls = 0
         self.divs = 0
+        self.pows = 0
+        self.mods = 0
 
     def visit_BinOp(self, node: ast.BinOp):
         if isinstance(node.op, (ast.Add, ast.Sub)):
@@ -29,11 +31,15 @@ class _FlopCounter(ast.NodeVisitor):
             self.muls += 1
         elif isinstance(node.op, (ast.Div, ast.FloorDiv)):
             self.divs += 1
+        elif isinstance(node.op, ast.Pow):
+            self.pows += 1
+        elif isinstance(node.op, ast.Mod):
+            self.mods += 1
         self.generic_visit(node)
 
     @property
     def total(self) -> int:
-        return self.adds + self.muls + self.divs
+        return self.adds + self.muls + self.divs + self.pows + self.mods
 
 
 def _count_unique_loads(spec: StencilSpec) -> int:
@@ -49,11 +55,24 @@ def _count_unique_loads(spec: StencilSpec) -> int:
 def roofline_analysis(
     spec: StencilSpec,
     hw: HardwareSpec | None = None,
-    peak_gflops: float = 10000.0,
+    peak_gflops: float | None = None,
 ) -> RooflineResult:
-    """Compute roofline metrics for a stencil."""
+    """Compute roofline metrics for a stencil.
+
+    Parameters
+    ----------
+    spec : StencilSpec
+        Stencil specification.
+    hw : HardwareSpec, optional
+        Hardware parameters. Defaults to HardwareSpec().
+    peak_gflops : float, optional
+        Override peak GFLOPS. If None, reads from hw.peak_gflops.
+    """
     if hw is None:
         hw = HardwareSpec()
+
+    if peak_gflops is None:
+        peak_gflops = hw.peak_gflops
 
     src = textwrap.dedent(inspect.getsource(spec.update_fn))
     tree = ast.parse(src)

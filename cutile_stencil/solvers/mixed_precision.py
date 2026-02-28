@@ -8,10 +8,12 @@ while maintaining FP64 accuracy in the outer residual.
 from __future__ import annotations
 
 from cutile_stencil.codegen.emitter import CodeEmitter
+from cutile_stencil.config import SolverConfig, DEFAULT_SOLVER
 
 
-def generate_mixed_precision_cg() -> str:
+def generate_mixed_precision_cg(solver_config: SolverConfig | None = None) -> str:
     """Generate mixed-precision iterative refinement CG driver."""
+    cfg = solver_config or DEFAULT_SOLVER
     e = CodeEmitter()
     e.line('"""Mixed-precision CG with iterative refinement (auto-generated).')
     e.line("")
@@ -98,8 +100,8 @@ def generate_mixed_precision_cg() -> str:
     e.blank()
     e.line("def mixed_precision_cg(spmv_fn_hp, spmv_fn_lp, b, x0,")
     e.line("                       inner_dtype=torch.float32,")
-    e.line("                       tol=1e-10, max_outer=20, max_inner=200,")
-    e.line("                       tile_size=256):")
+    e.line(f"                       tol={cfg.mixed_outer_tol}, max_outer={cfg.mixed_max_outer}, max_inner={cfg.mixed_max_inner},")
+    e.line(f"                       tile_size={cfg.tile_size}):")
     with e.indent():
         e.line('"""Mixed-precision iterative refinement CG.')
         e.line("")
@@ -131,7 +133,7 @@ def generate_mixed_precision_cg() -> str:
             e.line("d_lp = torch.zeros(N, dtype=inner_dtype, device=b.device)")
             e.blank()
             e.line("# Inner CG solve in low precision: A @ d ≈ r")
-            e.line("d_lp = inner_cg(spmv_fn_lp, r_lp, d_lp, tol=1e-4, max_inner=max_inner, tile_size=tile_size)")
+            e.line(f"d_lp = inner_cg(spmv_fn_lp, r_lp, d_lp, tol={cfg.mixed_inner_tol}, max_inner=max_inner, tile_size=tile_size)")
             e.blank()
             e.line("# Update solution in FP64: x += d (cast back)")
             e.line("x = x + d_lp.to(x.dtype)")

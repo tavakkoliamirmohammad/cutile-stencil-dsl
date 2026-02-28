@@ -89,3 +89,29 @@ def compute_halo(accesses: List[OffsetAccess], ndim: int) -> Tuple[int, ...]:
         for d, off in enumerate(acc.offsets):
             halos[d] = max(halos[d], abs(off))
     return tuple(halos)
+
+
+def compute_max_cfl(spec: StencilSpec) -> float:
+    """Estimate the maximum stable CFL number for an explicit stencil.
+
+    For an explicit time-stepping stencil of order p in d dimensions,
+    the CFL constraint is approximately:
+        CFL <= 1 / (d * p)
+
+    This is a conservative heuristic based on Von Neumann stability analysis
+    for standard finite-difference schemes.
+
+    Parameters
+    ----------
+    spec : StencilSpec
+        Stencil specification with ndim and order.
+
+    Returns
+    -------
+    float
+        Estimated maximum stable CFL number.
+    """
+    # Heuristic: for order-p stencil in d dimensions
+    d = spec.ndim
+    p = max(spec.order, 1)
+    return 1.0 / (d * (p / 2))
