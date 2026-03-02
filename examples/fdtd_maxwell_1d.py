@@ -127,6 +127,37 @@ def main():
     assert np.max(np.abs(H)) < 100.0, "H field blew up"
     print("  ✓ FDTD simulation stable")
 
+    # ── GPU kernel validation (single E-update step) ─────────────────
+    import importlib.util
+    import cupy as cp
+
+    mod_spec = importlib.util.spec_from_file_location("kernel", out_path)
+    mod = importlib.util.module_from_spec(mod_spec)
+    mod_spec.loader.exec_module(mod)
+
+    # Fresh test data for single-step validation
+    E_test = np.random.randn(N + 2 * h)
+    H_test = np.random.randn(N + 2 * h)
+
+    E_gpu = cp.asarray(E_test, dtype=cp.float64)
+    H_gpu = cp.asarray(H_test, dtype=cp.float64)
+    out_gpu = cp.zeros_like(E_gpu)
+    mod.launch_update_E(E_gpu, H_gpu, out_gpu)
+    cp.cuda.Device().synchronize()
+
+    gpu_result = cp.asnumpy(out_gpu)
+    # CPU reference
+    proxy = {
+        'E': _ArrayProxy(E_test, spec_E.halo_widths),
+        'H': _ArrayProxy(H_test, spec_E.halo_widths),
+    }
+    cpu_interior = spec_E.update_fn(proxy['E'], proxy['H'], 0)
+    cpu_ref = E_test.copy()
+    eh = spec_E.halo_widths[0]
+    cpu_ref[eh:-eh] = cpu_interior
+    assert np.allclose(gpu_result[eh:-eh], cpu_ref[eh:-eh]), "GPU kernel mismatch!"
+    print("  ✓ GPU kernel matches NumPy reference")
+
 
 if __name__ == "__main__":
     main()

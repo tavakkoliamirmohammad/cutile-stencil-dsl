@@ -48,28 +48,30 @@ class TestTemporalBlockingCodegen:
         code = gen.emit()
         ast.parse(code)
 
-    def test_temporal_uses_constant_halo(self):
-        """The temporal kernel should use constant per-step halo, not decreasing."""
+    def test_temporal_codegen_uses_shifted_views(self):
+        """Even with temporal config, 2D codegen uses shifted-view approach."""
         gen = self._make_temporal_gen()
         code = gen.emit()
-        # Should NOT contain the buggy pattern of variable h
+        # Shifted-view approach: multiple ct.load calls with power-of-two tiles
+        assert "ct.load" in code
+        assert "ct.store" in code
+
+    def test_temporal_codegen_no_expanded_tile(self):
+        """Shifted-view codegen does not use expanded (non-power-of-two) tiles."""
+        gen = self._make_temporal_gen()
+        code = gen.emit()
+        # Should NOT contain old temporal patterns
         assert "ehx - _t_step" not in code
-        # Should contain constant halo offsets
-        assert "Per-step halo is constant" in code
+        assert "for _t_step in range(" not in code
+        # Should use shifted-view kernel, not temporal_kernel
+        assert "heat2d_kernel" in code
 
-    def test_temporal_tile_shrinks_correctly(self):
-        """Tile shape shrinks by 2*hx and 2*hy each step."""
+    def test_temporal_codegen_valid_shifted_views(self):
+        """Temporal 2D codegen emits a valid shifted-view kernel with bid calls."""
         gen = self._make_temporal_gen()
         code = gen.emit()
-        # The generated code should reference tile.shape for inner dimensions
-        assert "tile.shape[0]" in code
-        assert "tile.shape[1]" in code
-
-    def test_temporal_kernel_contains_loop(self):
-        gen = self._make_temporal_gen()
-        code = gen.emit()
-        assert "for _t_step in range(" in code
-        assert "temporal_kernel" in code
+        assert "ct.bid(0)" in code
+        assert "ct.bid(1)" in code
 
 
 class TestClosureConstantCapture:
@@ -254,6 +256,7 @@ class TestTemporalBlockingDimensionIndependentHalos:
             gen = StencilCodeGenerator(spec, cfg, temp)
             code = gen.emit()
             ast.parse(code)
-            # Verify separate halo handling per dimension
-            assert "tile.shape[0]" in code
-            assert "tile.shape[1]" in code
+            # Shifted-view approach handles asymmetric halos via slice offsets
+            assert "ct.load" in code
+            assert "ct.bid(0)" in code
+            assert "ct.bid(1)" in code

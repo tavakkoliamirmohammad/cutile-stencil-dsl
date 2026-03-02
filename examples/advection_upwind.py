@@ -93,6 +93,25 @@ def main():
         assert final_center_of_mass >= initial_center_of_mass - 1, "Wave should move right"
         print("  ✓ Wave propagation direction verified")
 
+    # ── GPU kernel validation ────────────────────────────────────────
+    import importlib.util
+    import cupy as cp
+
+    mod_spec = importlib.util.spec_from_file_location("kernel", out_path)
+    mod = importlib.util.module_from_spec(mod_spec)
+    mod_spec.loader.exec_module(mod)
+
+    u_gpu = cp.asarray(u0, dtype=cp.float64)
+    out_gpu = cp.zeros_like(u_gpu)
+    mod.launch_advection_upwind(u_gpu, out_gpu)
+    cp.cuda.Device().synchronize()
+
+    gpu_result = cp.asnumpy(out_gpu)
+    cpu_result = apply_stencil(u0, spec)
+    interior = slice(h, -h)
+    assert np.allclose(gpu_result[interior], cpu_result[interior]), "GPU kernel mismatch!"
+    print("  ✓ GPU kernel matches NumPy reference")
+
 
 if __name__ == "__main__":
     main()

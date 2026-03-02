@@ -99,6 +99,34 @@ def main():
     print(f"  Max amplitude: {np.max(np.abs(u)):.6f}")
     print("  ✓ Simulation completed")
 
+    # ── GPU kernel validation ────────────────────────────────────────
+    import importlib.util
+    import cupy as cp
+
+    # Fresh test array (simulation modified u above)
+    test_u = np.zeros((Nx + 2 * hx, Ny + 2 * hy))
+    cx_t, cy_t = (Nx + 2 * hx) // 2, (Ny + 2 * hy) // 2
+    for ii in range(test_u.shape[0]):
+        for jj in range(test_u.shape[1]):
+            r2 = ((ii - cx_t) / 5.0)**2 + ((jj - cy_t) / 5.0)**2
+            test_u[ii, jj] = np.exp(-r2)
+
+    mod_spec = importlib.util.spec_from_file_location("kernel", out_path)
+    mod = importlib.util.module_from_spec(mod_spec)
+    mod_spec.loader.exec_module(mod)
+
+    u_gpu = cp.asarray(test_u, dtype=cp.float64)
+    out_gpu = cp.zeros_like(u_gpu)
+    mod.launch_wave_2d(u_gpu, out_gpu)
+    cp.cuda.Device().synchronize()
+
+    gpu_result = cp.asnumpy(out_gpu)
+    cpu_ref = apply_stencil(test_u, spec)
+    # Compare interior only (halo cells differ)
+    interior = (slice(hx, -hx), slice(hy, -hy))
+    assert np.allclose(gpu_result[interior], cpu_ref[interior], atol=1e-10), "GPU kernel mismatch!"
+    print("  ✓ GPU kernel matches NumPy reference")
+
 
 if __name__ == "__main__":
     main()

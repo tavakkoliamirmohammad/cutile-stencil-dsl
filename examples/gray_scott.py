@@ -120,6 +120,84 @@ def main():
     assert v.min() >= -0.1 and v.max() <= 1.1, f"v out of range: [{v.min()}, {v.max()}]"
     print("  ✓ Solution in valid range")
 
+    # ── Code generation ──────────────────────────────────────────────
+    from cutile_stencil.codegen.stencil_codegen import StencilCodeGenerator
+
+    gen_dir = os.path.join(os.path.dirname(__file__), "generated")
+    os.makedirs(gen_dir, exist_ok=True)
+
+    gen_u = StencilCodeGenerator(spec_u, tile_u)
+    out_path_u = os.path.join(gen_dir, "gray_scott_u_kernel.py")
+    gen_u.emit_to_file(out_path_u)
+    print(f"\nGenerated: {out_path_u}")
+
+    tile_v = compute_tile_config(spec_v, domain, hw)
+    gen_v = StencilCodeGenerator(spec_v, tile_v)
+    out_path_v = os.path.join(gen_dir, "gray_scott_v_kernel.py")
+    gen_v.emit_to_file(out_path_v)
+    print(f"Generated: {out_path_v}")
+
+    import ast
+    ast.parse(open(out_path_u).read())
+    ast.parse(open(out_path_v).read())
+    print("  ✓ Valid Python syntax")
+
+    # ── GPU kernel validation ────────────────────────────────────────
+    import importlib.util
+    import cupy as cp
+
+    # Fresh test data (simulation modified u, v above)
+    u_test = np.ones((Nx + 2 * hx, Ny + 2 * hy))
+    v_test = np.zeros_like(u_test)
+    cx_t, cy_t = (Nx + 2 * hx) // 2, (Ny + 2 * hy) // 2
+    r_t = 5
+    u_test[cx_t - r_t:cx_t + r_t, cy_t - r_t:cy_t + r_t] = 0.50
+    v_test[cx_t - r_t:cx_t + r_t, cy_t - r_t:cy_t + r_t] = 0.25
+
+    # Validate u-kernel
+    mod_spec_u = importlib.util.spec_from_file_location("kernel_u", out_path_u)
+    mod_u = importlib.util.module_from_spec(mod_spec_u)
+    mod_spec_u.loader.exec_module(mod_u)
+
+    u_gpu = cp.asarray(u_test, dtype=cp.float64)
+    v_gpu = cp.asarray(v_test, dtype=cp.float64)
+    out_gpu = cp.zeros_like(u_gpu)
+    mod_u.launch_gray_scott_u(u_gpu, v_gpu, out_gpu)
+    cp.cuda.Device().synchronize()
+
+    gpu_result = cp.asnumpy(out_gpu)
+    proxies_ref = {
+        'u': _ArrayProxy(u_test, halo_u),
+        'v': _ArrayProxy(v_test, halo_u),
+    }
+    cpu_interior = spec_u.update_fn(proxies_ref['u'], proxies_ref['v'], 0, 0)
+    cpu_ref = u_test.copy()
+    interior = tuple(slice(h_, n - h_) for h_, n in zip(halo_u, u_test.shape))
+    cpu_ref[interior] = cpu_interior
+    assert np.allclose(gpu_result[interior], cpu_ref[interior]), "GPU kernel mismatch (u)!"
+    print("  ✓ GPU kernel (gray_scott_u) matches NumPy reference")
+
+    # Validate v-kernel
+    mod_spec_v = importlib.util.spec_from_file_location("kernel_v", out_path_v)
+    mod_v = importlib.util.module_from_spec(mod_spec_v)
+    mod_spec_v.loader.exec_module(mod_v)
+
+    out_gpu_v = cp.zeros_like(v_gpu)
+    mod_v.launch_gray_scott_v(u_gpu, v_gpu, out_gpu_v)
+    cp.cuda.Device().synchronize()
+
+    gpu_result_v = cp.asnumpy(out_gpu_v)
+    proxies_ref_v = {
+        'u': _ArrayProxy(u_test, halo_v),
+        'v': _ArrayProxy(v_test, halo_v),
+    }
+    cpu_interior_v = spec_v.update_fn(proxies_ref_v['u'], proxies_ref_v['v'], 0, 0)
+    cpu_ref_v = v_test.copy()
+    interior_v = tuple(slice(h_, n - h_) for h_, n in zip(halo_v, v_test.shape))
+    cpu_ref_v[interior_v] = cpu_interior_v
+    assert np.allclose(gpu_result_v[interior_v], cpu_ref_v[interior_v]), "GPU kernel mismatch (v)!"
+    print("  ✓ GPU kernel (gray_scott_v) matches NumPy reference")
+
 
 if __name__ == "__main__":
     main()

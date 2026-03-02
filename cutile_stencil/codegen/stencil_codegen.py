@@ -1,9 +1,8 @@
 """Generate cuTile kernel Python files from StencilSpec.
 
-Strategy selection:
-  - 1D + low-order → shifted-view approach (like stencil1d.py)
-  - 2D/3D → offset-tile-load with padding_mode=ZERO
-  - Temporal blocking → fused multi-step kernel
+Strategy: shifted-view approach for all dimensions.
+Each unique stencil access becomes a pre-shifted array view so that
+ct.load always uses the base (power-of-two) tile size.
 """
 
 from __future__ import annotations
@@ -129,7 +128,7 @@ class StencilCodeGenerator:
             e.line(f"N = {first_input}.shape[0]")
             e.line("if stream is None:")
             with e.indent():
-                e.line("stream = torch.cuda.current_stream()")
+                e.line("stream = cp.cuda.get_current_stream()")
             # Create shifted views
             for vn, off, arr_name in view_names:
                 src = arr_name if multi_input else "u"
@@ -155,17 +154,17 @@ class StencilCodeGenerator:
             e.line("parser = argparse.ArgumentParser(add_help=False)")
             e.line('parser.add_argument("--precision", type=str, default="float64")')
             e.line("args, _ = parser.parse_known_args()")
-            e.line("dtype_map = {'float64': torch.float64, 'float32': torch.float32, 'float16': torch.float16}")
-            e.line("torch_dtype = dtype_map[args.precision]")
+            e.line("dtype_map = {'float64': cp.float64, 'float32': cp.float32, 'float16': cp.float16}")
+            e.line("cp_dtype = dtype_map[args.precision]")
             e.blank()
             e.line(f"N = {self.bench.grid_1d} + 2 * {halo}")
-            e.line("u = torch.randn(N, dtype=torch_dtype, device='cuda')")
-            e.line("out = torch.zeros_like(u)")
+            e.line("u = cp.random.randn(N).astype(cp_dtype)")
+            e.line("out = cp.zeros_like(u)")
             e.line(f"launch_{self.spec.name}(u, out)")
             e.line("print('Kernel launched successfully')")
 
     # ------------------------------------------------------------------
-    # 2D: offset-tile-load with padding_mode=ZERO
+    # 2D: shifted-view approach (same pattern as 1D)
     # ------------------------------------------------------------------
     def _emit_2d(self) -> str:
         e = CodeEmitter()
@@ -176,91 +175,13 @@ class StencilCodeGenerator:
         self._emit_header(e)
         e.blank()
         e.line("ConstInt = ct.Constant[int]")
-        pad_mode = self._get_padding_mode()
-        e.line(f"PAD_MODE = ct.PaddingMode.{pad_mode}")
         e.blank()
 
-        if self.temporal and self.temporal.steps > 1:
-            self._emit_2d_temporal(e, tx, ty, hx, hy)
-        else:
-            self._emit_2d_basic(e, tx, ty, hx, hy)
-
-        self._emit_launcher_2d(e, tx, ty)
-        self._emit_benchmark_2d(e, tx, ty)
+        view_names = self._build_view_names_nd(spec)
+        self._emit_kernel_nd(e, spec, view_names, 2, (tx, ty))
+        self._emit_launcher_nd(e, spec, view_names, 2, (tx, ty), (hx, hy))
+        self._emit_benchmark_nd(e, spec, 2, (tx, ty), (hx, hy))
         return e.render()
-
-    def _emit_2d_basic(self, e: CodeEmitter, tx, ty, hx, hy):
-        spec = self.spec
-        multi_input = len(spec.inputs) > 1
-        e.line("@ct.kernel")
-        if multi_input:
-            input_params = ", ".join(f"{inp}_in" for inp in spec.inputs)
-            e.line(f"def {spec.name}_kernel({input_params}, u_out, TX: ConstInt, TY: ConstInt):")
-        else:
-            e.line(f"def {spec.name}_kernel(u_in, u_out, TX: ConstInt, TY: ConstInt):")
-        with e.indent():
-            e.line("bx = ct.bid(0)")
-            e.line("by = ct.bid(1)")
-            etx = tx + 2 * hx
-            ety = ty + 2 * hy
-            if multi_input:
-                # Load separate expanded tiles per input array
-                for inp in spec.inputs:
-                    e.line(f"tile_{inp} = ct.load({inp}_in, index=(bx, by), shape=({etx}, {ety}), padding_mode=PAD_MODE)")
-            else:
-                e.line(f"# Load expanded tile ({etx} x {ety}) with halo")
-                e.line(f"tile_in = ct.load(u_in, index=(bx, by), shape=({etx}, {ety}), padding_mode=PAD_MODE)")
-            e.blank()
-            e.line(f"# Extract stencil neighbors from loaded tile")
-            terms = []
-            for acc in spec.accesses:
-                ox, oy = acc.offsets
-                sx = hx + ox
-                sy = hy + oy
-                ex = sx + tx
-                ey = sy + ty
-                vname = f"nb_{acc.array_name}_{ox:+d}_{oy:+d}".replace("+", "p").replace("-", "m")
-                tile_src = f"tile_{acc.array_name}" if multi_input else "tile_in"
-                e.line(f"{vname} = {tile_src}[{sx}:{ex}, {sy}:{ey}]")
-                terms.append(vname)
-
-            e.blank()
-            self._emit_stencil_expr_nd(e, spec, terms)
-            e.blank()
-            e.line("ct.store(u_out, index=(bx, by), tile=result)")
-
-    def _emit_2d_temporal(self, e: CodeEmitter, tx, ty, hx, hy):
-        spec = self.spec
-        T = self.temporal.steps
-        ehx, ehy = self.temporal.expanded_halo
-        e.line("@ct.kernel")
-        e.line(f"def {spec.name}_temporal_kernel(u_in, u_out, TX: ConstInt, TY: ConstInt):")
-        with e.indent():
-            e.line("bx = ct.bid(0)")
-            e.line("by = ct.bid(1)")
-            etx = tx + 2 * ehx
-            ety = ty + 2 * ehy
-            e.line(f"# Load expanded tile for {T} temporal steps")
-            e.line(f"tile = ct.load(u_in, index=(bx, by), shape=({etx}, {ety}), padding_mode=PAD_MODE)")
-            e.blank()
-            e.line(f"# Fused {T}-step temporal blocking")
-            e.line(f"for _t_step in range({T}):")
-            with e.indent():
-                # After each shrink, the remaining halo is always exactly (hx, hy)
-                # per side, so use constant per-step halo offsets
-                e.line(f"# Per-step halo is constant: ({hx}, {hy})")
-                e.line(f"inner_x = tile.shape[0] - 2 * {hx}")
-                e.line(f"inner_y = tile.shape[1] - 2 * {hy}")
-                for i, acc in enumerate(spec.accesses):
-                    ox, oy = acc.offsets
-                    vname = f"nb{i}"
-                    e.line(f"{vname} = tile[{hx} + {ox}:{hx} + {ox} + inner_x, {hy} + {oy}:{hy} + {oy} + inner_y]")
-                # Stencil expression
-                nb_terms = [f"nb{i}" for i in range(len(spec.accesses))]
-                self._emit_stencil_expr_nd(e, spec, nb_terms)
-                e.line(f"tile = result  # Shrinks by (2*{hx}, 2*{hy}) each step")
-            e.blank()
-            e.line("ct.store(u_out, index=(bx, by), tile=tile)")
 
     def _emit_stencil_expr_nd(self, e: CodeEmitter, spec: StencilSpec, term_names):
         """Emit the stencil expression via AST transform (inlines intermediates)."""
@@ -273,47 +194,8 @@ class StencilCodeGenerator:
             # Fallback
             e.line(f"result = {' + '.join(term_names)}")
 
-    def _emit_launcher_2d(self, e: CodeEmitter, tx, ty):
-        spec = self.spec
-        multi_input = len(spec.inputs) > 1
-        kname = spec.name + "_kernel"
-        if self.temporal and self.temporal.steps > 1:
-            kname = spec.name + "_temporal_kernel"
-        e.blank()
-        e.blank()
-        if multi_input:
-            input_params = ", ".join(spec.inputs)
-            e.line(f"def launch_{spec.name}({input_params}, u_out, stream=None):")
-        else:
-            e.line(f"def launch_{spec.name}(u_in, u_out, stream=None):")
-        with e.indent():
-            e.line(f"TX, TY = {tx}, {ty}")
-            first_input = spec.inputs[0] if multi_input else "u_in"
-            e.line(f"Nx, Ny = {first_input}.shape")
-            e.line("if stream is None:")
-            with e.indent():
-                e.line("stream = torch.cuda.current_stream()")
-            e.line("grid = (ct.cdiv(Nx, TX), ct.cdiv(Ny, TY))")
-            if multi_input:
-                args = ", ".join(spec.inputs)
-                e.line(f"ct.launch(stream, grid, {kname}, ({args}, u_out, TX, TY))")
-            else:
-                e.line(f"ct.launch(stream, grid, {kname}, (u_in, u_out, TX, TY))")
-
-    def _emit_benchmark_2d(self, e: CodeEmitter, tx, ty):
-        spec = self.spec
-        e.blank()
-        e.blank()
-        e.line("if __name__ == '__main__':")
-        with e.indent():
-            e.line(f"N = {self.bench.grid_2d[0]}")
-            e.line("u = torch.randn(N, N, dtype=torch.float64, device='cuda')")
-            e.line("out = torch.zeros_like(u)")
-            e.line(f"launch_{spec.name}(u, out)")
-            e.line("print('Kernel launched successfully')")
-
     # ------------------------------------------------------------------
-    # 3D: bid(0), bid(1), bid(2) grid pattern
+    # 3D: shifted-view approach (same pattern as 1D/2D)
     # ------------------------------------------------------------------
     def _emit_3d(self) -> str:
         e = CodeEmitter()
@@ -324,83 +206,128 @@ class StencilCodeGenerator:
         self._emit_header(e)
         e.blank()
         e.line("ConstInt = ct.Constant[int]")
-        pad_mode = self._get_padding_mode()
-        e.line(f"PAD_MODE = ct.PaddingMode.{pad_mode}")
         e.blank()
 
-        multi_input = len(spec.inputs) > 1
+        view_names = self._build_view_names_nd(spec)
+        self._emit_kernel_nd(e, spec, view_names, 3, (tx, ty, tz))
+        self._emit_launcher_nd(e, spec, view_names, 3, (tx, ty, tz), (hx, hy, hz))
+        self._emit_benchmark_nd(e, spec, 3, (tx, ty, tz), (hx, hy, hz))
+        return e.render()
+
+    # ------------------------------------------------------------------
+    # Shared nD helpers (2D/3D shifted-view kernel, launcher, benchmark)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _build_view_names_nd(spec: StencilSpec):
+        """Build deduplicated list of (view_name, offsets_tuple, array_name)."""
+        seen = {}
+        view_names = []
+        for acc in spec.accesses:
+            key = (acc.array_name, acc.offsets)
+            if key not in seen:
+                parts = "_".join(f"{o:+d}" for o in acc.offsets)
+                vname = f"v_{acc.array_name}_{parts}".replace("+", "p").replace("-", "m")
+                seen[key] = vname
+                view_names.append((vname, acc.offsets, acc.array_name))
+        return view_names
+
+    def _emit_kernel_nd(self, e: CodeEmitter, spec, view_names, ndim, tile_sizes):
+        """Emit an nD kernel using shifted-view parameters (power-of-two loads)."""
+        bid_vars = ["bx", "by", "bz"][:ndim]
+        tile_vars = ["TX", "TY", "TZ"][:ndim]
+        tile_const_params = ", ".join(f"{tv}: ConstInt" for tv in tile_vars)
+
         e.line("@ct.kernel")
-        if multi_input:
-            input_params = ", ".join(f"{inp}_in" for inp in spec.inputs)
-            e.line(f"def {spec.name}_kernel({input_params}, u_out, TX: ConstInt, TY: ConstInt, TZ: ConstInt):")
-        else:
-            e.line(f"def {spec.name}_kernel(u_in, u_out, TX: ConstInt, TY: ConstInt, TZ: ConstInt):")
+        params = ", ".join(vn for vn, _, _ in view_names)
+        e.line(f"def {spec.name}_kernel({params}, output, {tile_const_params}):")
         with e.indent():
-            e.line("bx = ct.bid(0)")
-            e.line("by = ct.bid(1)")
-            e.line("bz = ct.bid(2)")
-            etx = tx + 2 * hx
-            ety = ty + 2 * hy
-            etz = tz + 2 * hz
-            if multi_input:
-                for inp in spec.inputs:
-                    e.line(f"tile_{inp} = ct.load({inp}_in, index=(bx, by, bz), shape=({etx}, {ety}, {etz}), padding_mode=PAD_MODE)")
-            else:
-                e.line(f"tile_in = ct.load(u_in, index=(bx, by, bz), shape=({etx}, {ety}, {etz}), padding_mode=PAD_MODE)")
+            for i, bv in enumerate(bid_vars):
+                e.line(f"{bv} = ct.bid({i})")
+            shape_tuple = ", ".join(tile_vars)
+            idx_tuple = ", ".join(bid_vars)
+            for vn, _, _ in view_names:
+                e.line(f"t_{vn} = ct.load({vn}, index=({idx_tuple}), shape=({shape_tuple}))")
             e.blank()
-            terms = []
-            for acc in spec.accesses:
-                ox, oy, oz = acc.offsets
-                sx, sy, sz = hx + ox, hy + oy, hz + oz
-                ex, ey, ez = sx + tx, sy + ty, sz + tz
-                vname = f"nb_{acc.array_name}_{ox:+d}_{oy:+d}_{oz:+d}".replace("+", "p").replace("-", "m")
-                tile_src = f"tile_{acc.array_name}" if multi_input else "tile_in"
-                e.line(f"{vname} = {tile_src}[{sx}:{ex}, {sy}:{ey}, {sz}:{ez}]")
-                terms.append(vname)
+            # Map accesses → tile variables
+            offset_to_tile = {(vn_arr, offs): f"t_{vn}" for vn, offs, vn_arr in view_names}
+            term_names = [offset_to_tile[(acc.array_name, acc.offsets)] for acc in spec.accesses]
+            self._emit_stencil_expr_nd(e, spec, term_names)
             e.blank()
-            self._emit_stencil_expr_nd(e, spec, terms)
-            e.blank()
-            e.line("ct.store(u_out, index=(bx, by, bz), tile=result)")
+            e.line(f"ct.store(output, index=({idx_tuple}), tile=result)")
 
-        # Launcher
+    @staticmethod
+    def _slice_expr(h_var: str, off: int, n_var: str) -> str:
+        """Format a Python slice string: ``h+off : N-h+off``."""
+        if off == 0:
+            return f"{h_var}:{n_var} - {h_var}"
+        elif off > 0:
+            return f"{h_var} + {off}:{n_var} - {h_var} + {off}"
+        else:
+            return f"{h_var} - {abs(off)}:{n_var} - {h_var} - {abs(off)}"
+
+    def _emit_launcher_nd(self, e, spec, view_names, ndim, tile_sizes, halo_widths):
+        """Emit an nD launcher that creates shifted views and launches the kernel."""
+        multi_input = len(spec.inputs) > 1
+        h_vars = ["hx", "hy", "hz"][:ndim]
+        n_vars = ["Nx", "Ny", "Nz"][:ndim]
+        t_vars = ["TX", "TY", "TZ"][:ndim]
+
         e.blank()
         e.blank()
-        e.line(f"def launch_{spec.name}(u_in, u_out, stream=None):")
+        if multi_input:
+            input_params = ", ".join(spec.inputs)
+            e.line(f"def launch_{spec.name}({input_params}, u_out, stream=None):")
+        else:
+            e.line(f"def launch_{spec.name}(u_in, u_out, stream=None):")
         with e.indent():
-            e.line(f"TX, TY, TZ = {tx}, {ty}, {tz}")
-            e.line("Nx, Ny, Nz = u_in.shape")
+            e.line(f"{', '.join(t_vars)} = {', '.join(str(t) for t in tile_sizes)}")
+            e.line(f"{', '.join(h_vars)} = {', '.join(str(h) for h in halo_widths)}")
+            first_input = spec.inputs[0] if multi_input else "u_in"
+            e.line(f"{', '.join(n_vars)} = {first_input}.shape")
             e.line("if stream is None:")
             with e.indent():
-                e.line("stream = torch.cuda.current_stream()")
-            e.line("grid = (ct.cdiv(Nx, TX), ct.cdiv(Ny, TY), ct.cdiv(Nz, TZ))")
-            e.line(f"ct.launch(stream, grid, {spec.name}_kernel, (u_in, u_out, TX, TY, TZ))")
+                e.line("stream = cp.cuda.get_current_stream()")
+            # Create shifted views
+            for vn, offsets, arr_name in view_names:
+                src = arr_name if multi_input else "u_in"
+                slices = ", ".join(
+                    self._slice_expr(h_vars[d], offsets[d], n_vars[d])
+                    for d in range(ndim)
+                )
+                e.line(f"{vn} = {src}[{slices}]")
+            out_slices = ", ".join(f"{h_vars[d]}:{n_vars[d]} - {h_vars[d]}" for d in range(ndim))
+            e.line(f"out_view = u_out[{out_slices}]")
+            grid_parts = ", ".join(
+                f"ct.cdiv({n_vars[d]} - 2 * {h_vars[d]}, {t_vars[d]})" for d in range(ndim)
+            )
+            e.line(f"grid = ({grid_parts})")
+            args = ", ".join(vn for vn, _, _ in view_names)
+            t_args = ", ".join(t_vars)
+            e.line(f"ct.launch(stream, grid, {spec.name}_kernel, ({args}, out_view, {t_args}))")
 
+    def _emit_benchmark_nd(self, e, spec, ndim, tile_sizes, halo_widths):
+        """Emit an nD benchmark __main__ block."""
+        h_vars = ["hx", "hy", "hz"][:ndim]
+        bench_grids = {2: self.bench.grid_2d, 3: self.bench.grid_3d}
         e.blank()
         e.blank()
         e.line("if __name__ == '__main__':")
         with e.indent():
-            e.line(f"N = {self.bench.grid_3d[0]}")
-            e.line("u = torch.randn(N, N, N, dtype=torch.float64, device='cuda')")
-            e.line("out = torch.zeros_like(u)")
+            e.line(f"N = {bench_grids[ndim][0]}")
+            h_assign = ", ".join(f"{h_vars[d]}" for d in range(ndim))
+            h_vals = ", ".join(str(h) for h in halo_widths)
+            e.line(f"{h_assign} = {h_vals}")
+            shape = ", ".join(f"N + 2 * {h_vars[d]}" for d in range(ndim))
+            e.line(f"u = cp.random.randn({shape}).astype(cp.float64)")
+            e.line("out = cp.zeros_like(u)")
             e.line(f"launch_{spec.name}(u, out)")
             e.line("print('Kernel launched successfully')")
-
-        return e.render()
-
-    # ------------------------------------------------------------------
-    # Common helpers
-    # ------------------------------------------------------------------
-    def _get_padding_mode(self) -> str:
-        """Get cuTile padding mode from boundary spec."""
-        if self.spec.boundary is not None:
-            return self.spec.boundary.cuTile_padding_mode(0)
-        return "ZERO"
 
     def _emit_header(self, e: CodeEmitter):
         e.line(f'"""cuTile kernel for {self.spec.name} stencil (auto-generated)."""')
         e.blank()
         e.line("import cuda.tile as ct")
-        e.line("import torch")
+        e.line("import cupy as cp")
         self._emit_closure_constants(e)
 
     def _emit_closure_constants(self, e: CodeEmitter):

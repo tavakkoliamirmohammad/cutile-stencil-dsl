@@ -168,11 +168,12 @@ class TestBoundaryInDecorator:
 
 
 class TestCodegenPaddingMode:
-    def test_periodic_uses_wrap(self):
-        """Codegen with periodic BC uses WRAP padding mode."""
+    def test_periodic_generates_valid_shifted_views(self):
+        """Codegen with periodic BC generates valid shifted-view code."""
         from cutile_stencil.analysis.tiling import compute_tile_config
         from cutile_stencil.codegen.stencil_codegen import StencilCodeGenerator
         from cutile_stencil.dsl.types import HardwareSpec
+        import ast
 
         bc = BoundarySpec.periodic(2)
 
@@ -187,4 +188,7 @@ class TestCodegenPaddingMode:
         cfg = compute_tile_config(spec, (64, 64), hw)
         gen = StencilCodeGenerator(spec, cfg)
         code = gen.emit()
-        assert "PaddingMode.WRAP" in code
+        ast.parse(code)
+        # Shifted-view approach uses ct.load with power-of-two tiles
+        assert "ct.load" in code
+        assert "ct.store" in code

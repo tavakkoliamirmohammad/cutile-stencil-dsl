@@ -72,6 +72,24 @@ def main():
     assert abs(lap_center - (-6.0)) < 1e-10, f"Expected -6.0, got {lap_center}"
     print("  ✓ Correctness verified")
 
+    # ── GPU kernel validation ────────────────────────────────────────
+    import importlib.util
+    import cupy as cp
+
+    mod_spec = importlib.util.spec_from_file_location("kernel", out_path)
+    mod = importlib.util.module_from_spec(mod_spec)
+    mod_spec.loader.exec_module(mod)
+
+    u_gpu = cp.asarray(u, dtype=cp.float64)
+    out_gpu = cp.zeros_like(u_gpu)
+    mod.launch_laplacian_3d(u_gpu, out_gpu)
+    cp.cuda.Device().synchronize()
+
+    gpu_result = cp.asnumpy(out_gpu)
+    interior = (slice(h, -h), slice(h, -h), slice(h, -h))
+    assert np.allclose(gpu_result[interior], result[interior], atol=1e-10), "GPU kernel mismatch!"
+    print("  ✓ GPU kernel matches NumPy reference")
+
 
 if __name__ == "__main__":
     main()

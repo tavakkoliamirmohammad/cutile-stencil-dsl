@@ -102,9 +102,11 @@ class TestStencilCodegen:
         assert "ct.load" in code
         assert "ct.store" in code
 
-    def test_2d_contains_padding_mode(self):
+    def test_2d_uses_shifted_views(self):
         code = _gen_2d().emit()
-        assert "PaddingMode.ZERO" in code
+        # 2D codegen uses shifted-view approach (no padding mode needed)
+        assert "ct.load" in code
+        assert "ct.store" in code
 
     def test_3d_uses_three_bid(self):
         code = _gen_3d().emit()

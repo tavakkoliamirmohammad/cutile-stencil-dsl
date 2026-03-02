@@ -13,7 +13,7 @@ def _header(e: CodeEmitter):
     e.line('"""Auto-generated cuTile solver kernel."""')
     e.blank()
     e.line("import cuda.tile as ct")
-    e.line("import torch")
+    e.line("import cupy as cp")
     e.blank()
     e.line("ConstInt = ct.Constant[int]")
 
@@ -35,7 +35,7 @@ def generate_dia_spmv() -> str:
             e.line("dv = ct.load(diag_vals, index=(d, pid), shape=(1, TILE), padding_mode=ct.PaddingMode.ZERO)")
             e.line("dv = ct.reshape(dv, (TILE,))")
             e.line("# Compute shifted x indices via gather")
-            e.line("base = pid * TILE + ct.arange(TILE, dtype=torch.int32)")
+            e.line("base = pid * TILE + ct.arange(TILE, dtype=cp.int32)")
             e.line("off = ct.load(offsets_arr, index=d, shape=())")
             e.line("x_idx = base + off")
             e.line("x_vals = ct.gather(x, x_idx)")
@@ -47,7 +47,7 @@ def generate_dia_spmv() -> str:
     with e.indent():
         e.line("N = y.shape[0]")
         e.line("grid = (ct.cdiv(N, tile_size),)")
-        e.line("stream = torch.cuda.current_stream()")
+        e.line("stream = cp.cuda.get_current_stream()")
         e.line("ct.launch(stream, grid, dia_spmv_kernel, (diag_vals, offsets_arr, x, y, num_diags, tile_size))")
     return e.render()
 
@@ -70,7 +70,7 @@ def generate_bsr_spmv() -> str:
             e.line("col_block = ct.load(indices, index=idx, shape=())")
             e.line("block = ct.load(data, index=(idx, 0, 0), shape=(1, BR, BC), padding_mode=ct.PaddingMode.ZERO)")
             e.line("block = ct.reshape(block, (BR, BC))")
-            e.line("x_col = col_block * BC + ct.arange(BC, dtype=torch.int32)")
+            e.line("x_col = col_block * BC + ct.arange(BC, dtype=cp.int32)")
             e.line("x_tile = ct.gather(x, x_col)")
             e.line("x_tile = ct.reshape(x_tile, (BC, 1))")
             e.line("acc = ct.mma(block, x_tile, acc)")
@@ -98,7 +98,7 @@ def generate_axpy() -> str:
     with e.indent():
         e.line("N = x.shape[0]")
         e.line("grid = (ct.cdiv(N, tile_size),)")
-        e.line("stream = torch.cuda.current_stream()")
+        e.line("stream = cp.cuda.get_current_stream()")
         e.line("ct.launch(stream, grid, axpy_kernel, (x, y, alpha, tile_size))")
     return e.render()
 
@@ -124,7 +124,7 @@ def generate_dot() -> str:
         e.line("N = a.shape[0]")
         e.line("result.zero_()")
         e.line("grid = (ct.cdiv(N, tile_size),)")
-        e.line("stream = torch.cuda.current_stream()")
+        e.line("stream = cp.cuda.get_current_stream()")
         e.line("ct.launch(stream, grid, dot_kernel, (a, b, result, tile_size))")
     return e.render()
 
@@ -150,6 +150,6 @@ def generate_norm2() -> str:
         e.line("N = a.shape[0]")
         e.line("result.zero_()")
         e.line("grid = (ct.cdiv(N, tile_size),)")
-        e.line("stream = torch.cuda.current_stream()")
+        e.line("stream = cp.cuda.get_current_stream()")
         e.line("ct.launch(stream, grid, norm2_kernel, (a, result, tile_size))")
     return e.render()

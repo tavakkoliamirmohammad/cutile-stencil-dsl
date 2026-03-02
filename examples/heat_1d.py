@@ -93,6 +93,25 @@ def main():
     assert np.sum(history[-1]**2) < np.sum(u0**2), "Energy should decrease"
     print("  ✓ Energy dissipation verified")
 
+    # ── GPU kernel validation ────────────────────────────────────────
+    import importlib.util
+    import cupy as cp
+
+    mod_spec = importlib.util.spec_from_file_location("kernel", out_path)
+    mod = importlib.util.module_from_spec(mod_spec)
+    mod_spec.loader.exec_module(mod)
+
+    u_gpu = cp.asarray(u0, dtype=cp.float64)
+    out_gpu = cp.zeros_like(u_gpu)
+    mod.launch_heat_1d(u_gpu, out_gpu)
+    cp.cuda.Device().synchronize()
+
+    gpu_result = cp.asnumpy(out_gpu)
+    cpu_result = apply_stencil(u0, spec)
+    interior = slice(h, -h)
+    assert np.allclose(gpu_result[interior], cpu_result[interior]), "GPU kernel mismatch!"
+    print("  ✓ GPU kernel matches NumPy reference")
+
 
 if __name__ == "__main__":
     main()
