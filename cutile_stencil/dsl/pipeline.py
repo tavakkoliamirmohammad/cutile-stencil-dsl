@@ -114,8 +114,16 @@ class CompileResult:
         # Determine input arrays
         if len(inputs) == 0:
             raise ValueError("At least one input array is required")
+        if len(inputs) != len(spec.inputs):
+            raise ValueError(f"Expected {len(spec.inputs)} input arrays to validate(), got {len(inputs)}")
 
+        # Check shape consistency for multi-input
         multi_input = len(spec.inputs) > 1
+        if multi_input:
+            first_shape = inputs[0].shape
+            for arr in inputs[1:]:
+                if arr.shape != first_shape:
+                    raise ValueError(f"All input arrays must have the same shape. Mismatch: {first_shape} vs {arr.shape}")
         halo = spec.halo_widths
 
         if self.layout is not None:
@@ -130,7 +138,7 @@ class CompileResult:
     def _validate_flat(self, inputs, launcher, spec, halo, multi_input, atol):
         import cupy as cp
 
-        gpu_inputs = [cp.asarray(arr, dtype=cp.float64) for arr in inputs]
+        gpu_inputs = [cp.asarray(arr, dtype=arr.dtype) for arr in inputs]
         out_gpu = cp.zeros_like(gpu_inputs[0])
 
         if multi_input:
@@ -167,7 +175,7 @@ class CompileResult:
 
         # Convert flat inputs to bricked layout
         bricked_inputs_np = [to_bricks(arr, brick_sizes, halo) for arr in inputs]
-        gpu_inputs = [cp.asarray(b, dtype=cp.float64) for b in bricked_inputs_np]
+        gpu_inputs = [cp.asarray(b, dtype=arr.dtype) for b, arr in zip(bricked_inputs_np, inputs)]
         out_gpu = cp.zeros_like(gpu_inputs[0])
 
         if multi_input:
