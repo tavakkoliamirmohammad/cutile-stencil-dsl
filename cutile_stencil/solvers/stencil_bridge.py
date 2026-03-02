@@ -92,6 +92,7 @@ def dia_to_stencil_spec(
     ns = {}
     exec(fn_source, ns)  # noqa: S102
     update_fn = ns[name]
+    update_fn._source = fn_source
 
     spec = StencilSpec(
         name=name,

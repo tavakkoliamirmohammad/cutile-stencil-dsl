@@ -240,13 +240,11 @@ class TestGPUValidation:
         r.validate(N=32, tol=1e-8, atol=1e-4)
 
     @gpu_required
-    @pytest.mark.xfail(reason="Persistent CG spinlock barriers have known synchronization issues")
     def test_persistent_cg_validate(self):
         r = compile_persistent_cg()
         r.validate(N=64, tol=1e-8, atol=1e-5)
 
     @gpu_required
-    @pytest.mark.xfail(reason="Stencil codegen drops coefficients for bridge-generated specs")
     def test_stencil_cg_validate(self):
         spec = laplacian_stencil_spec(1)
         r = compile_stencil_cg(spec, (128,))

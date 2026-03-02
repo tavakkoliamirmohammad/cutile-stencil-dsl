@@ -182,7 +182,13 @@ def transform_stencil_expr(
     str
         The transformed expression as a Python source string.
     """
-    src = textwrap.dedent(inspect.getsource(func))
+    try:
+        src = textwrap.dedent(inspect.getsource(func))
+    except OSError:
+        if hasattr(func, '_source'):
+            src = func._source
+        else:
+            raise
     tree = ast.parse(src)
 
     func_def = None
@@ -267,7 +273,13 @@ def extract_closure_constants(func) -> Dict[str, Any]:
     # Method 2: Check __globals__ for names used in the function body
     # that aren't parameters, builtins, or array names
     if hasattr(func, '__code__'):
-        src = textwrap.dedent(inspect.getsource(func))
+        try:
+            src = textwrap.dedent(inspect.getsource(func))
+        except OSError:
+            if hasattr(func, '_source'):
+                src = func._source
+            else:
+                return constants
         tree = ast.parse(src)
         func_def = None
         for node in ast.walk(tree):

@@ -107,6 +107,38 @@ def emit_cast_kernel(e: CodeEmitter) -> None:
         e.line("ct.store(dst, index=(pid,), tile=ct.astype(t, dst.dtype))")
 
 
+# ── Arrive-wait barrier with sense reversal (for persistent CG) ──────
+
+def emit_barrier(
+    e: CodeEmitter,
+    phase: int,
+    *,
+    last_block_lines: list[str] | None = None,
+) -> None:
+    """Emit an atomic-counter arrive-wait barrier with sense reversal.
+
+    Uses ``counters[phase]`` for arrival counting and ``senses[phase]``
+    for sense-flag notification.  The last arriving block performs any
+    *last_block_lines* cleanup and flips the sense flag so all other
+    blocks can proceed.
+
+    The caller must have ``bid``, ``num_blocks``, ``iteration``,
+    ``counters``, and ``senses`` in scope.
+    """
+    e.line(f"# ── Barrier {phase} ──")
+    e.line("expected = iteration & 1")
+    e.line("target = 1 - expected")
+    e.line(f"cnt = ct.atomic_add(counters, ({phase},), 1, memory_order=ct.MemoryOrder.ACQ_REL)")
+    e.line("if cnt == num_blocks - 1:")
+    with e.indent():
+        e.line(f"ct.atomic_xchg(counters, ({phase},), 0, memory_order=ct.MemoryOrder.RELAXED)")
+        for ln in (last_block_lines or []):
+            e.line(ln)
+        e.line(f"ct.atomic_xchg(senses, ({phase},), target, memory_order=ct.MemoryOrder.RELEASE)")
+    e.line(f"while ct.atomic_cas(senses, {phase}, target, target, memory_order=ct.MemoryOrder.ACQUIRE) != target: pass")
+    e.blank()
+
+
 # ── DIA SpMV phase (for persistent CG) ───────────────────────────────
 
 def emit_dia_spmv_phase(e: CodeEmitter, dtype: str = "float64") -> None:

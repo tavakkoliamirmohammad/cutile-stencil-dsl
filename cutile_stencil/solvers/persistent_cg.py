@@ -1,15 +1,14 @@
 """Persistent single-kernel CG solver (cuTile code generation).
 
-Uses ct.num_blocks(0) persistent loop with spinlock synchronization
-between CG phases (SpMV, dot, axpy). Follows the layernorm.py backward
-pass pattern for atomic synchronization.
+Uses ct.num_blocks(0) persistent loop with atomic-counter arrive-wait
+barriers (sense reversal) between CG phases (SpMV, dot, axpy).
 """
 
 from __future__ import annotations
 
 from cutile_stencil.codegen.emitter import CodeEmitter
 from cutile_stencil.config import SolverConfig, DEFAULT_SOLVER
-from cutile_stencil.solvers.blas_kernels import emit_dia_spmv_phase
+from cutile_stencil.solvers.blas_kernels import emit_barrier, emit_dia_spmv_phase
 
 
 def generate_persistent_cg(solver_config: SolverConfig | None = None, dtype: str = "float64") -> str:
@@ -19,7 +18,7 @@ def generate_persistent_cg(solver_config: SolverConfig | None = None, dtype: str
     e.line('"""Persistent single-kernel CG solver (auto-generated).')
     e.line("")
     e.line("All CG iterations run inside a single @ct.kernel using")
-    e.line("ct.num_blocks(0) persistent loop with spinlock barriers.")
+    e.line("ct.num_blocks(0) persistent loop with arrive-wait barriers.")
     e.line('"""')
     e.blank()
     e.line("import cuda.tile as ct")
@@ -35,8 +34,8 @@ def generate_persistent_cg(solver_config: SolverConfig | None = None, dtype: str
     e.line("    diag_vals, offsets_arr, num_diags_val,")
     e.line("    # Vectors: x, b, r, p, Ap")
     e.line("    x, b, r, p, Ap,")
-    e.line("    # Scalars: r_dot_r, p_dot_Ap, convergence flag")
-    e.line("    scalars, locks,")
+    e.line("    # Scalars: [0]=p_dot_Ap, [1]=r_dot_r, [2]=new_r_dot_r")
+    e.line("    scalars, counters, senses,")
     e.line("    # Config")
     e.line("    max_iter: ConstInt, TILE: ConstInt,")
     e.line("):")
@@ -48,15 +47,20 @@ def generate_persistent_cg(solver_config: SolverConfig | None = None, dtype: str
         e.blank()
         e.line("for iteration in range(max_iter):")
         with e.indent():
+            # Phase 1: SpMV  Ap = A @ p
             e.line("# ── Phase 1: SpMV  Ap = A @ p ─────────────────")
             e.line("for tile_id in range(bid, num_tiles, num_blocks):")
             with e.indent():
                 emit_dia_spmv_phase(e, dtype)
             e.blank()
-            e.line("# ── Barrier: wait for all blocks to finish SpMV ──")
-            e.line("while ct.atomic_cas(locks, 0, 0, 1, memory_order=ct.MemoryOrder.ACQUIRE) == 1: pass")
-            e.line("ct.atomic_xchg(locks, 0, 0, memory_order=ct.MemoryOrder.RELEASE)")
-            e.blank()
+
+            # Barrier 0: after SpMV, last block resets scalars[0] and scalars[1]
+            emit_barrier(e, 0, last_block_lines=[
+                "ct.atomic_xchg(scalars, (0,), 0.0, memory_order=ct.MemoryOrder.RELAXED)",
+                "ct.atomic_xchg(scalars, (1,), 0.0, memory_order=ct.MemoryOrder.RELAXED)",
+            ])
+
+            # Phase 2: dot products
             e.line("# ── Phase 2: dot products (p^T Ap, r^T r) ────────")
             e.line("for tile_id in range(bid, num_tiles, num_blocks):")
             with e.indent():
@@ -66,11 +70,14 @@ def generate_persistent_cg(solver_config: SolverConfig | None = None, dtype: str
                 e.line("tr = ct.load(r, index=(tile_id,), shape=(TILE,))")
                 e.line("ct.atomic_add(scalars, (1,), ct.sum(tr * tr))   # r^T r")
             e.blank()
-            e.line("# ── Barrier ──")
-            e.line("while ct.atomic_cas(locks, 1, 0, 1, memory_order=ct.MemoryOrder.ACQUIRE) == 1: pass")
-            e.line("ct.atomic_xchg(locks, 1, 0, memory_order=ct.MemoryOrder.RELEASE)")
-            e.blank()
-            e.line("# ── Phase 3: update x, r, p ──────────────────────")
+
+            # Barrier 1: after dots, last block resets scalars[2]
+            emit_barrier(e, 1, last_block_lines=[
+                "ct.atomic_xchg(scalars, (2,), 0.0, memory_order=ct.MemoryOrder.RELAXED)",
+            ])
+
+            # Phase 3: update x, r; accumulate new r^T r
+            e.line("# ── Phase 3: update x, r ──────────────────────────")
             e.line("for tile_id in range(bid, num_tiles, num_blocks):")
             with e.indent():
                 e.line("tx = ct.load(x, index=(tile_id,), shape=(TILE,))")
@@ -89,11 +96,12 @@ def generate_persistent_cg(solver_config: SolverConfig | None = None, dtype: str
                 e.line("# Accumulate new r^T r")
                 e.line("ct.atomic_add(scalars, (2,), ct.sum(new_r * new_r))")
             e.blank()
-            e.line("# ── Barrier ──")
-            e.line("while ct.atomic_cas(locks, 2, 0, 1, memory_order=ct.MemoryOrder.ACQUIRE) == 1: pass")
-            e.line("ct.atomic_xchg(locks, 2, 0, memory_order=ct.MemoryOrder.RELEASE)")
-            e.blank()
-            e.line("# ── Phase 4: update p, reset scalars ─────────────")
+
+            # Barrier 2: after x,r updates and new_r_dot_r accumulation
+            emit_barrier(e, 2)
+
+            # Phase 4: update p
+            e.line("# ── Phase 4: update p ─────────────────────────────")
             e.line("new_r_dot_r = ct.load(scalars, index=2, shape=())")
             e.line("old_r_dot_r = ct.load(scalars, index=1, shape=())")
             e.line("beta = new_r_dot_r / old_r_dot_r")
@@ -102,6 +110,11 @@ def generate_persistent_cg(solver_config: SolverConfig | None = None, dtype: str
                 e.line("tr = ct.load(r, index=(tile_id,), shape=(TILE,))")
                 e.line("tp = ct.load(p, index=(tile_id,), shape=(TILE,))")
                 e.line("ct.store(p, index=(tile_id,), tile=tr + beta * tp)")
+            e.blank()
+
+            # Barrier 3: after p update, before next iteration's SpMV
+            emit_barrier(e, 3)
+
     e.blank()
     e.blank()
     e.line("def launch_persistent_cg(diag_vals, offsets_arr, num_diags,")
@@ -114,13 +127,14 @@ def generate_persistent_cg(solver_config: SolverConfig | None = None, dtype: str
         e.line("p = r.copy()")
         e.line("Ap = cp.zeros_like(x)")
         e.line(f"scalars = cp.zeros({cfg.persistent_spinlock_size}, dtype=x.dtype)")
-        e.line(f"locks = cp.zeros({cfg.persistent_spinlock_size}, dtype=cp.int32)")
+        e.line(f"counters = cp.zeros({cfg.persistent_spinlock_size}, dtype=cp.int32)")
+        e.line(f"senses = cp.zeros({cfg.persistent_spinlock_size}, dtype=cp.int32)")
         e.line("stream = cp.cuda.get_current_stream()")
         e.line("grid = (num_sms,)")
         e.line("ct.launch(stream, grid, persistent_cg_kernel, (")
         e.line("    diag_vals, offsets_arr, num_diags,")
         e.line("    x, b, r, p, Ap,")
-        e.line("    scalars, locks,")
+        e.line("    scalars, counters, senses,")
         e.line("    max_iter, tile_size,")
         e.line("))")
         e.line("return x")
