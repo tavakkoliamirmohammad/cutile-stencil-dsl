@@ -232,12 +232,18 @@ def analyze(
     if hw is None:
         hw = HardwareSpec()
 
-    # Step 1: Extract footprint
-    accesses = extract_footprint(spec)
+    # Step 1: Extract footprint (skip if accesses already set, e.g. from bridge)
+    if spec.accesses:
+        accesses = spec.accesses
+    else:
+        accesses = extract_footprint(spec)
 
-    # Step 2: Compute halo widths
-    halo = compute_halo(accesses, spec.ndim)
-    spec.halo_widths = halo
+    # Step 2: Compute halo widths (skip if already set)
+    if spec.halo_widths is not None:
+        halo = spec.halo_widths
+    else:
+        halo = compute_halo(accesses, spec.ndim)
+        spec.halo_widths = halo
 
     # Step 3: Tile configuration
     tile_cfg = compute_tile_config(spec, domain, hw)

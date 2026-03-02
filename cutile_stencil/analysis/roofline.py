@@ -74,11 +74,18 @@ def roofline_analysis(
     if peak_gflops is None:
         peak_gflops = hw.peak_gflops
 
-    src = textwrap.dedent(inspect.getsource(spec.update_fn))
-    tree = ast.parse(src)
-    counter = _FlopCounter()
-    counter.visit(tree)
-    flops = max(counter.total, 1)
+    try:
+        src = textwrap.dedent(inspect.getsource(spec.update_fn))
+        tree = ast.parse(src)
+        counter = _FlopCounter()
+        counter.visit(tree)
+        flops = max(counter.total, 1)
+    except OSError:
+        # Synthetic functions (e.g. from stencil bridge exec()) have no source.
+        # Estimate FLOPs from the number of accesses: each non-center access
+        # contributes a multiply and an add.
+        n_accesses = len(spec.accesses) if spec.accesses else max(1, len(spec.inputs))
+        flops = max(2 * n_accesses - 1, 1)
 
     loads = _count_unique_loads(spec)
     # One store per output point

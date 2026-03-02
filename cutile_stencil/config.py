@@ -196,6 +196,7 @@ class SolverConfig:
     mixed_max_inner: int = 200
     persistent_spinlock_size: int = 4
     tile_size: int = 256
+    dtype: str = "float64"
 
 
 # Default configs

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from cutile_stencil.codegen.emitter import CodeEmitter
 from cutile_stencil.config import SolverConfig, DEFAULT_SOLVER
+from cutile_stencil.solvers.blas_kernels import emit_dia_spmv_phase
 
 
-def generate_persistent_cg(solver_config: SolverConfig | None = None) -> str:
+def generate_persistent_cg(solver_config: SolverConfig | None = None, dtype: str = "float64") -> str:
     """Generate a persistent CG kernel that runs the entire solve in one launch."""
     cfg = solver_config or DEFAULT_SOLVER
     e = CodeEmitter()
@@ -50,16 +51,7 @@ def generate_persistent_cg(solver_config: SolverConfig | None = None) -> str:
             e.line("# ── Phase 1: SpMV  Ap = A @ p ─────────────────")
             e.line("for tile_id in range(bid, num_tiles, num_blocks):")
             with e.indent():
-                e.line("acc = ct.full((TILE,), 0.0, dtype=ct.float64)")
-                e.line("for d in range(num_diags_val):")
-                with e.indent():
-                    e.line("dv = ct.load(diag_vals, index=(d, tile_id), shape=(1, TILE), padding_mode=ct.PaddingMode.ZERO)")
-                    e.line("dv = ct.reshape(dv, (TILE,))")
-                    e.line("base = tile_id * TILE + ct.arange(TILE, dtype=cp.int32)")
-                    e.line("off = ct.load(offsets_arr, index=d, shape=())")
-                    e.line("x_vals = ct.gather(p, base + off)")
-                    e.line("acc = acc + dv * x_vals")
-                e.line("ct.store(Ap, index=(tile_id,), tile=acc)")
+                emit_dia_spmv_phase(e, dtype)
             e.blank()
             e.line("# ── Barrier: wait for all blocks to finish SpMV ──")
             e.line("while ct.atomic_cas(locks, 0, 0, 1, memory_order=ct.MemoryOrder.ACQUIRE) == 1: pass")
@@ -118,8 +110,8 @@ def generate_persistent_cg(solver_config: SolverConfig | None = None) -> str:
     with e.indent():
         e.line('"""Launch the persistent CG kernel."""')
         e.line("N = x.shape[0]")
-        e.line("r = b.clone()  # Initial: r = b (assuming x0 = 0)")
-        e.line("p = r.clone()")
+        e.line("r = b.copy()  # Initial: r = b (assuming x0 = 0)")
+        e.line("p = r.copy()")
         e.line("Ap = cp.zeros_like(x)")
         e.line(f"scalars = cp.zeros({cfg.persistent_spinlock_size}, dtype=x.dtype)")
         e.line(f"locks = cp.zeros({cfg.persistent_spinlock_size}, dtype=cp.int32)")
@@ -133,3 +125,23 @@ def generate_persistent_cg(solver_config: SolverConfig | None = None) -> str:
         e.line("))")
         e.line("return x")
     return e.render()
+
+
+def compile_persistent_cg(
+    solver_config: SolverConfig | None = None,
+    dtype: str = "float64",
+) -> "PersistentCGCompileResult":
+    """Compile a persistent CG solver, returning a validatable result."""
+    import ast
+    from cutile_stencil.solvers.solver_compile import PersistentCGCompileResult
+
+    cfg = solver_config or DEFAULT_SOLVER
+    code = generate_persistent_cg(cfg, dtype)
+    ast.parse(code)
+
+    return PersistentCGCompileResult(
+        solver_type="PersistentCG",
+        code=code,
+        config=cfg,
+        dtype=dtype,
+    )

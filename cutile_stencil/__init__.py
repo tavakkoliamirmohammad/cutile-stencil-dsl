@@ -6,3 +6,5 @@ from cutile_stencil.dsl.registry import register, lookup, all_stencils
 from cutile_stencil.dsl.boundary import BoundaryType, BoundaryCondition, BoundarySpec
 from cutile_stencil.dsl.pipeline import analyze, AnalysisResult, compile, CompileResult
 from cutile_stencil.config import GPU_PRESETS
+from cutile_stencil.solvers.stencil_cg import generate_stencil_cg, compile_stencil_cg
+from cutile_stencil.solvers.stencil_bridge import laplacian_stencil_spec
