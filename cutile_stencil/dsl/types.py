@@ -102,3 +102,48 @@ class RooflineResult:
     arithmetic_intensity: float
     bound: str          # "memory" or "compute"
     peak_gpoints_s: float
+
+
+@dataclass(frozen=True)
+class BrickLayout:
+    """Brick decomposition layout parameters.
+
+    The domain is divided into bricks of size ``brick_sizes`` per dimension.
+    Each brick is stored with halo padding from its neighbours so that stencil
+    application is self-contained within a brick.
+
+    Bricked shape: ``(nb0, nb1, ..., B0+2*h0, B1+2*h1, ...)``
+    where outer dims are brick indices and inner dims are padded brick data.
+    """
+    brick_sizes: Tuple[int, ...]
+
+    def validate(self, ndim: int, halo_widths: Tuple[int, ...]) -> None:
+        """Raise ValueError if brick_sizes don't match ndim or are too small."""
+        if len(self.brick_sizes) != ndim:
+            raise ValueError(
+                f"brick_sizes has {len(self.brick_sizes)} dims, expected {ndim}"
+            )
+        for d, (bs, hw) in enumerate(zip(self.brick_sizes, halo_widths)):
+            if bs < 2 * hw:
+                raise ValueError(
+                    f"brick_sizes[{d}]={bs} < 2*halo={2 * hw}"
+                )
+
+    def num_bricks(self, domain: Tuple[int, ...]) -> Tuple[int, ...]:
+        """Number of bricks per dimension (domain must be divisible)."""
+        result = []
+        for d, (n, bs) in enumerate(zip(domain, self.brick_sizes)):
+            if n % bs != 0:
+                raise ValueError(
+                    f"domain[{d}]={n} not divisible by brick_sizes[{d}]={bs}"
+                )
+            result.append(n // bs)
+        return tuple(result)
+
+    def bricked_shape(
+        self, domain: Tuple[int, ...], halo_widths: Tuple[int, ...]
+    ) -> Tuple[int, ...]:
+        """Shape of the bricked array: (nb0, nb1, ..., B0+2*h0, B1+2*h1, ...)."""
+        nbs = self.num_bricks(domain)
+        padded = tuple(bs + 2 * h for bs, h in zip(self.brick_sizes, halo_widths))
+        return nbs + padded

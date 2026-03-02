@@ -17,6 +17,7 @@ import numpy as np
 
 from cutile_stencil.dsl.types import (
     StencilSpec, HardwareSpec, TileConfig, TemporalConfig, RooflineResult,
+    BrickLayout,
 )
 from cutile_stencil.analysis.footprint import extract_footprint, compute_halo
 from cutile_stencil.analysis.tiling import compute_tile_config
@@ -40,6 +41,7 @@ class CompileResult:
     spec: StencilSpec
     analysis: AnalysisResult
     code: str
+    layout: Optional[BrickLayout] = field(default=None, repr=False)
     _emitted_path: Optional[Path] = field(default=None, repr=False)
 
     def print_summary(self) -> None:
@@ -78,8 +80,10 @@ class CompileResult:
         Parameters
         ----------
         *inputs : numpy.ndarray
-            Input arrays (full arrays including halo). For single-input
-            stencils pass one array; for multi-input pass one per field.
+            Input arrays (flat, including halo). For single-input stencils
+            pass one array; for multi-input pass one per field.  For bricked
+            kernels the inputs should still be *flat* — they are converted to
+            bricked layout automatically.
         atol : float
             Absolute tolerance for np.allclose.
 
@@ -112,8 +116,20 @@ class CompileResult:
             raise ValueError("At least one input array is required")
 
         multi_input = len(spec.inputs) > 1
+        halo = spec.halo_widths
 
-        # GPU execution
+        if self.layout is not None:
+            self._validate_bricked(
+                inputs, launcher, spec, halo, multi_input, atol
+            )
+        else:
+            self._validate_flat(
+                inputs, launcher, spec, halo, multi_input, atol
+            )
+
+    def _validate_flat(self, inputs, launcher, spec, halo, multi_input, atol):
+        import cupy as cp
+
         gpu_inputs = [cp.asarray(arr, dtype=cp.float64) for arr in inputs]
         out_gpu = cp.zeros_like(gpu_inputs[0])
 
@@ -126,8 +142,6 @@ class CompileResult:
 
         # CPU reference
         from cutile_stencil.reference.stencil_ref import _ArrayProxy
-        halo = spec.halo_widths
-
         if multi_input:
             proxies = [_ArrayProxy(arr, halo) for arr in inputs]
             idx_args = [0] * spec.ndim
@@ -144,6 +158,46 @@ class CompileResult:
             gpu_result[interior], cpu_ref[interior], atol=atol
         ), f"GPU kernel mismatch for {spec.name}!"
         print(f"  ✓ GPU kernel ({spec.name}) matches NumPy reference")
+
+    def _validate_bricked(self, inputs, launcher, spec, halo, multi_input, atol):
+        import cupy as cp
+        from cutile_stencil.layout.bricks import to_bricks, from_bricks
+
+        brick_sizes = self.layout.brick_sizes
+
+        # Convert flat inputs to bricked layout
+        bricked_inputs_np = [to_bricks(arr, brick_sizes, halo) for arr in inputs]
+        gpu_inputs = [cp.asarray(b, dtype=cp.float64) for b in bricked_inputs_np]
+        out_gpu = cp.zeros_like(gpu_inputs[0])
+
+        if multi_input:
+            launcher(*gpu_inputs, out_gpu)
+        else:
+            launcher(gpu_inputs[0], out_gpu)
+        cp.cuda.Device().synchronize()
+
+        # Convert bricked GPU output back to flat
+        gpu_bricked = cp.asnumpy(out_gpu)
+        gpu_flat = from_bricks(gpu_bricked, brick_sizes, halo)
+
+        # CPU reference on flat data
+        from cutile_stencil.reference.stencil_ref import _ArrayProxy
+        if multi_input:
+            proxies = [_ArrayProxy(arr, halo) for arr in inputs]
+            idx_args = [0] * spec.ndim
+            cpu_interior = spec.update_fn(*proxies, *idx_args)
+            cpu_ref = inputs[0].copy()
+            interior = tuple(slice(h, s - h) for h, s in zip(halo, cpu_ref.shape))
+            cpu_ref[interior] = cpu_interior
+        else:
+            from cutile_stencil.reference.stencil_ref import apply_stencil
+            cpu_ref = apply_stencil(inputs[0], spec)
+            interior = tuple(slice(h, s - h) for h, s in zip(halo, inputs[0].shape))
+
+        assert np.allclose(
+            gpu_flat[interior], cpu_ref[interior], atol=atol
+        ), f"GPU bricked kernel mismatch for {spec.name}!"
+        print(f"  ✓ GPU bricked kernel ({spec.name}) matches NumPy reference")
 
 
 def analyze(
@@ -203,6 +257,7 @@ def compile(
     stencil_fn,
     domain: Tuple[int, ...],
     hw: HardwareSpec | None = None,
+    layout: BrickLayout | None = None,
 ) -> CompileResult:
     """One-call analyze + codegen. Returns a CompileResult with generated code.
 
@@ -215,6 +270,9 @@ def compile(
         Domain size per dimension (interior points).
     hw : HardwareSpec, optional
         GPU hardware parameters. Defaults to HardwareSpec().
+    layout : BrickLayout, optional
+        If provided, generate a bricked memory layout kernel instead of a
+        flat kernel. The domain must be divisible by the brick sizes.
 
     Returns
     -------
@@ -235,12 +293,19 @@ def compile(
     # Run analysis
     ar = analyze(spec, domain, hw)
 
+    # Validate brick layout if provided
+    if layout is not None:
+        layout.validate(spec.ndim, spec.halo_widths)
+        layout.num_bricks(domain)  # validates divisibility
+
     # Generate code
     from cutile_stencil.codegen.stencil_codegen import StencilCodeGenerator
-    gen = StencilCodeGenerator(spec, ar.tile_config, ar.temporal_config)
+    gen = StencilCodeGenerator(
+        spec, ar.tile_config, ar.temporal_config, layout=layout
+    )
     code = gen.emit()
 
     # Validate syntax
     ast.parse(code)
 
-    return CompileResult(spec=spec, analysis=ar, code=code)
+    return CompileResult(spec=spec, analysis=ar, code=code, layout=layout)

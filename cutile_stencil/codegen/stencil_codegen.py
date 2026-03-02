@@ -13,7 +13,7 @@ from typing import Optional
 
 from cutile_stencil.codegen.emitter import CodeEmitter
 from cutile_stencil.codegen.ast_transform import transform_stencil_expr
-from cutile_stencil.dsl.types import StencilSpec, TileConfig, TemporalConfig
+from cutile_stencil.dsl.types import StencilSpec, TileConfig, TemporalConfig, BrickLayout
 from cutile_stencil.config import BenchmarkConfig, DEFAULT_BENCHMARK
 
 
@@ -26,13 +26,17 @@ class StencilCodeGenerator:
         tile_config: TileConfig,
         temporal_config: Optional[TemporalConfig] = None,
         benchmark_config: Optional[BenchmarkConfig] = None,
+        layout: Optional[BrickLayout] = None,
     ):
         self.spec = spec
         self.tile = tile_config
         self.temporal = temporal_config
         self.bench = benchmark_config or DEFAULT_BENCHMARK
+        self.layout = layout
 
     def emit(self) -> str:
+        if self.layout is not None:
+            return self._emit_bricked()
         if self.spec.ndim == 1:
             return self._emit_1d()
         elif self.spec.ndim == 2:
@@ -351,6 +355,194 @@ class StencilCodeGenerator:
             e.line(f"result = {expr_src}")
         except Exception:
             e.line(f"result = {' + '.join(term_names)}")
+
+    # ------------------------------------------------------------------
+    # Bricked memory layout codegen
+    # ------------------------------------------------------------------
+    def _emit_bricked(self) -> str:
+        """Top-level bricked codegen: header + kernel + launcher."""
+        e = CodeEmitter()
+        spec = self.spec
+        ndim = spec.ndim
+        tile_sizes = self.tile.tile_sizes
+        halo_widths = self.tile.halo_widths
+        brick_sizes = self.layout.brick_sizes
+
+        self._emit_header(e)
+        e.blank()
+        e.line("ConstInt = ct.Constant[int]")
+        e.blank()
+
+        access_names = self._build_access_names(spec)
+        self._emit_kernel_bricked_nd(
+            e, spec, access_names, ndim, tile_sizes, brick_sizes, halo_widths
+        )
+        self._emit_launcher_bricked_nd(
+            e, spec, ndim, tile_sizes, brick_sizes, halo_widths
+        )
+        return e.render()
+
+    def _emit_kernel_bricked_nd(
+        self, e, spec, access_names, ndim, tile_sizes, brick_sizes, halo_widths
+    ):
+        """Emit bricked kernel using divmod for brick/tile selection.
+
+        Grid dim d = num_bricks_d * cdiv(B_d, T_d).
+        Kernel computes brick_id = bid // tiles_per_brick, tile_id = bid % tiles_per_brick.
+        Outer .slice() selects brick, inner .slice() applies stencil offset.
+        """
+        # Variable names
+        tile_vars = ["TX", "TY", "TZ"][:ndim]
+        brick_vars = ["BX", "BY", "BZ"][:ndim]
+        halo_vars = ["HX", "HY", "HZ"][:ndim]
+        tpb_vars = ["TPB_X", "TPB_Y", "TPB_Z"][:ndim]
+        bid_vars = ["bid_x", "bid_y", "bid_z"][:ndim]
+        bix_vars = ["bix", "biy", "biz"][:ndim]
+        tid_vars = ["tid_x", "tid_y", "tid_z"][:ndim]
+
+        tile_params = ", ".join(f"{tv}: ConstInt" for tv in tile_vars)
+        brick_params = ", ".join(f"{bv}: ConstInt" for bv in brick_vars)
+        halo_params = ", ".join(f"{hv}: ConstInt" for hv in halo_vars)
+        tpb_params = ", ".join(f"{tp}: ConstInt" for tp in tpb_vars)
+
+        multi_input = len(spec.inputs) > 1
+        input_params = ", ".join(spec.inputs) if multi_input else spec.inputs[0]
+
+        e.line("@ct.kernel")
+        e.line(
+            f"def {spec.name}_kernel("
+            f"{input_params}, output, "
+            f"{tile_params}, {brick_params}, {halo_params}, {tpb_params}):"
+        )
+        with e.indent():
+            # Divmod to get brick index and tile-within-brick index
+            for d in range(ndim):
+                e.line(f"{bid_vars[d]} = ct.bid({d})")
+                e.line(f"{bix_vars[d]} = {bid_vars[d]} // {tpb_vars[d]}")
+                e.line(f"{tid_vars[d]} = {bid_vars[d]} % {tpb_vars[d]}")
+
+            e.blank()
+            # Slice outer dims to select brick, then inner dims for stencil offset
+            for vname, offsets, arr_name in access_names:
+                chain = arr_name
+                # Outer dims: select brick
+                for d in range(ndim):
+                    chain = (
+                        f"{chain}.slice(axis={d}, "
+                        f"start={bix_vars[d]}, stop={bix_vars[d]} + 1)"
+                    )
+                # Inner dims: apply stencil offset within the padded brick
+                for d in range(ndim):
+                    axis = ndim + d
+                    off = offsets[d]
+                    start = self._offset_expr(halo_vars[d], off)
+                    stop = self._offset_expr(
+                        halo_vars[d], off, add_n=True, n_var=brick_vars[d]
+                    )
+                    chain = f"{chain}.slice(axis={axis}, start={start}, stop={stop})"
+                e.line(f"{vname} = {chain}")
+
+            # Output view
+            out_chain = "output"
+            for d in range(ndim):
+                out_chain = (
+                    f"{out_chain}.slice(axis={d}, "
+                    f"start={bix_vars[d]}, stop={bix_vars[d]} + 1)"
+                )
+            for d in range(ndim):
+                axis = ndim + d
+                out_chain = (
+                    f"{out_chain}.slice(axis={axis}, "
+                    f"start={halo_vars[d]}, stop={halo_vars[d]} + {brick_vars[d]})"
+                )
+            e.line(f"out = {out_chain}")
+            e.blank()
+
+            # Load tiles using tile-within-brick index.
+            # After .slice() the array is still 2*ndim-dimensional (outer
+            # brick dims are size 1).  ct.load requires full-rank index/shape.
+            outer_zeros = ", ".join(["0"] * ndim)
+            outer_ones = ", ".join(["1"] * ndim)
+            inner_idx = ", ".join(tid_vars)
+            inner_shape = ", ".join(tile_vars)
+            full_idx = f"{outer_zeros}, {inner_idx}"
+            full_shape = f"{outer_ones}, {inner_shape}"
+            for vname, _, _ in access_names:
+                e.line(
+                    f"t_{vname} = ct.load({vname}, "
+                    f"index=({full_idx}), shape=({full_shape}))"
+                )
+            e.blank()
+
+            # Stencil expression
+            offset_to_tile = {
+                (arr, offs): f"t_{vn}" for vn, offs, arr in access_names
+            }
+            term_names = [
+                offset_to_tile[(acc.array_name, acc.offsets)]
+                for acc in spec.accesses
+            ]
+            self._emit_stencil_expr_nd(e, spec, term_names)
+            e.blank()
+            e.line(f"ct.store(out, index=({full_idx}), tile=result)")
+
+    def _emit_launcher_bricked_nd(
+        self, e, spec, ndim, tile_sizes, brick_sizes, halo_widths
+    ):
+        """Emit bricked launcher: grid = num_bricks * tiles_per_brick per dim."""
+        multi_input = len(spec.inputs) > 1
+        t_vars = ["TX", "TY", "TZ"][:ndim]
+        b_vars = ["BX", "BY", "BZ"][:ndim]
+        h_vars = ["HX", "HY", "HZ"][:ndim]
+        tpb_vars = ["TPB_X", "TPB_Y", "TPB_Z"][:ndim]
+        nb_vars = ["NBX", "NBY", "NBZ"][:ndim]
+
+        e.blank()
+        e.blank()
+        if multi_input:
+            input_params = ", ".join(spec.inputs)
+            e.line(f"def launch_{spec.name}({input_params}, u_out, stream=None):")
+        else:
+            e.line(f"def launch_{spec.name}(u_in, u_out, stream=None):")
+        with e.indent():
+            e.line(f"{', '.join(t_vars)} = {', '.join(str(t) for t in tile_sizes)}")
+            e.line(f"{', '.join(b_vars)} = {', '.join(str(b) for b in brick_sizes)}")
+            e.line(f"{', '.join(h_vars)} = {', '.join(str(h) for h in halo_widths)}")
+
+            # Get num_bricks from array shape (outer dims)
+            first_input = spec.inputs[0] if multi_input else "u_in"
+            for d in range(ndim):
+                e.line(f"{nb_vars[d]} = {first_input}.shape[{d}]")
+
+            e.line("if stream is None:")
+            with e.indent():
+                e.line("stream = cp.cuda.get_current_stream()")
+
+            # Tiles per brick
+            for d in range(ndim):
+                e.line(
+                    f"{tpb_vars[d]} = ct.cdiv({b_vars[d]}, {t_vars[d]})"
+                )
+
+            grid_parts = ", ".join(
+                f"{nb_vars[d]} * {tpb_vars[d]}" for d in range(ndim)
+            )
+            # Trailing comma for 1D so Python sees a tuple, not an int
+            trailing = "," if ndim == 1 else ""
+            e.line(f"grid = ({grid_parts}{trailing})")
+
+            if multi_input:
+                args = ", ".join(spec.inputs)
+            else:
+                args = "u_in"
+            t_args = ", ".join(t_vars)
+            b_args = ", ".join(b_vars)
+            h_args = ", ".join(h_vars)
+            tpb_args = ", ".join(tpb_vars)
+            e.line(
+                f"ct.launch(stream, grid, {spec.name}_kernel, "
+                f"({args}, u_out, {t_args}, {b_args}, {h_args}, {tpb_args}))"
+            )
 
     # ------------------------------------------------------------------
     # Offset expression helpers for .slice() calls

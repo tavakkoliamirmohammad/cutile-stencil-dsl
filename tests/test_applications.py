@@ -8,10 +8,7 @@ from cutile_stencil.dsl.registry import clear
 from cutile_stencil.analysis.footprint import extract_footprint, compute_halo
 from cutile_stencil.reference.stencil_ref import apply_stencil, time_march, _ArrayProxy
 
-needs_cuda = pytest.mark.skipif(
-    shutil.which("tileiras") is None,
-    reason="tileiras not found – run: module load cuda/13.1.0",
-)
+
 
 
 @pytest.fixture(autouse=True)
@@ -217,7 +214,6 @@ class TestShallowWater:
         assert "hv" in arr_names
 
 
-@needs_cuda
 class TestExampleSmoke:
     def test_advection_upwind_example(self):
         from examples.advection_upwind import main
