@@ -25,6 +25,8 @@ def _make_heat_spec(boundary=None):
         return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
 
     spec = heat._stencil_spec
+    assert spec.ndim == 1
+    assert spec.order == 2
     accesses = extract_footprint(spec)
     spec.halo_widths = compute_halo(accesses, 1)
     return spec
@@ -157,6 +159,8 @@ class TestBoundaryInDecorator:
         def lap(u, i, j):
             return u[i - 1, j] + u[i + 1, j] + u[i, j - 1] + u[i, j + 1] - 4 * u[i, j]
 
+        assert lap._stencil_spec.ndim == 2
+        assert lap._stencil_spec.order == 2
         assert lap._stencil_spec.boundary is bc
 
     def test_spec_boundary_none_by_default(self):
@@ -182,6 +186,8 @@ class TestCodegenPaddingMode:
             return u[i - 1, j] + u[i + 1, j] + u[i, j - 1] + u[i, j + 1] - 4 * u[i, j]
 
         spec = lap._stencil_spec
+        assert spec.ndim == 2
+        assert spec.order == 2
         accesses = extract_footprint(spec)
         spec.halo_widths = compute_halo(accesses, 2)
         hw = HardwareSpec(shared_mem_bytes=49152, dtype_bytes=8)

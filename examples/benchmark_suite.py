@@ -19,15 +19,15 @@ def _define_stencils():
     """Define a set of benchmark stencils."""
     clear()
 
-    @stencil(ndim=1, order=2)
+    @stencil()
     def heat_1d(u, i):
         return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
 
-    @stencil(ndim=2, order=2)
+    @stencil()
     def laplacian_2d(u, i, j):
         return u[i - 1, j] + u[i + 1, j] + u[i, j - 1] + u[i, j + 1] - 4 * u[i, j]
 
-    @stencil(ndim=1, order=2)
+    @stencil()
     def advection_1d(u, i):
         return u[i] - 0.5 * (u[i] - u[i - 1])
 

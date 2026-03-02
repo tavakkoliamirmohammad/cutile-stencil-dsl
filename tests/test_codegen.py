@@ -33,6 +33,8 @@ def _gen_1d():
     def heat(u, i):
         return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
     spec = heat._stencil_spec
+    assert spec.ndim == 1
+    assert spec.order == 2
     accesses = extract_footprint(spec)
     spec.halo_widths = compute_halo(accesses, 1)
     cfg = compute_tile_config(spec, (1024,), hw)
@@ -44,6 +46,8 @@ def _gen_2d():
     def lap2d(u, i, j):
         return u[i - 1, j] + u[i + 1, j] + u[i, j - 1] + u[i, j + 1] - 4 * u[i, j]
     spec = lap2d._stencil_spec
+    assert spec.ndim == 2
+    assert spec.order == 2
     accesses = extract_footprint(spec)
     spec.halo_widths = compute_halo(accesses, 2)
     cfg = compute_tile_config(spec, (256, 256), hw)
@@ -58,6 +62,8 @@ def _gen_3d():
                 + u[i, j, k - 1] + u[i, j, k + 1]
                 - 6 * u[i, j, k])
     spec = lap3d._stencil_spec
+    assert spec.ndim == 3
+    assert spec.order == 2
     accesses = extract_footprint(spec)
     spec.halo_widths = compute_halo(accesses, 3)
     cfg = compute_tile_config(spec, (64, 64, 64), hw)
@@ -69,6 +75,8 @@ def _gen_2d_temporal():
     def heat2d(u, i, j):
         return 0.25 * (u[i - 1, j] + u[i + 1, j] + u[i, j - 1] + u[i, j + 1])
     spec = heat2d._stencil_spec
+    assert spec.ndim == 2
+    assert spec.order == 2
     accesses = extract_footprint(spec)
     spec.halo_widths = compute_halo(accesses, 2)
     cfg = compute_tile_config(spec, (256, 256), hw)

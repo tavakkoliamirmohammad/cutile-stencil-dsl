@@ -29,6 +29,8 @@ class TestInlineTransformer:
             tmp = u[i - 1] + u[i + 1]
             return 0.5 * tmp
 
+        assert s._stencil_spec.ndim == 1
+        assert s._stencil_spec.order == 2
         expr = get_inlined_return_expr(s._stencil_spec.update_fn, 1)
         assert "tmp" not in expr
         assert "u[i - 1]" in expr or "u[i + 1]" in expr
@@ -55,6 +57,8 @@ class TestInlineTransformer:
             lap_y = u[i, j - 1] + u[i, j + 1] - 2 * u[i, j]
             return 0.1 * (lap_x + lap_y)
 
+        assert wave._stencil_spec.ndim == 2
+        assert wave._stencil_spec.order == 4
         expr = get_inlined_return_expr(wave._stencil_spec.update_fn, 2)
         assert "lap_x" not in expr
         assert "lap_y" not in expr
@@ -105,6 +109,8 @@ class TestTransformStencilExpr:
             return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
 
         spec = heat._stencil_spec
+        assert spec.ndim == 1
+        assert spec.order == 2
         accesses = extract_footprint(spec)
         terms = ["t_left", "t_center", "t_right"]
         result = transform_stencil_expr(spec.update_fn, accesses, 1, terms)
@@ -122,6 +128,8 @@ class TestTransformStencilExpr:
             return 0.1 * (lap_x + lap_y)
 
         spec = wave._stencil_spec
+        assert spec.ndim == 2
+        assert spec.order == 2
         accesses = extract_footprint(spec)
         terms = [f"nb{i}" for i in range(len(accesses))]
         result = transform_stencil_expr(spec.update_fn, accesses, 2, terms)
@@ -145,6 +153,8 @@ class TestTransformStencilExpr:
             return 0.1 * (lap_x + lap_y)
 
         spec = wave_2d._stencil_spec
+        assert spec.ndim == 2
+        assert spec.order == 4
         accesses = extract_footprint(spec)
         spec.halo_widths = compute_halo(accesses, 2)
         hw = HardwareSpec(shared_mem_bytes=49152, dtype_bytes=8)
@@ -168,6 +178,8 @@ class TestTransformStencilExpr:
             return 0.5 * diff
 
         spec = s._stencil_spec
+        assert spec.ndim == 3
+        assert spec.order == 2
         accesses = extract_footprint(spec)
         terms = [f"t{i}" for i in range(len(accesses))]
         result = transform_stencil_expr(spec.update_fn, accesses, 3, terms)

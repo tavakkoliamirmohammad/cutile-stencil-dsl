@@ -33,6 +33,8 @@ class TestTemporalBlockingCodegen:
             return 0.25 * (u[i - 1, j] + u[i + 1, j] + u[i, j - 1] + u[i, j + 1])
 
         spec = heat2d._stencil_spec
+        assert spec.ndim == 2
+        assert spec.order == 2
         accesses = extract_footprint(spec)
         spec.halo_widths = compute_halo(accesses, 2)
         cfg = compute_tile_config(spec, (256, 256), hw)
@@ -85,6 +87,8 @@ class TestClosureConstantCapture:
             return u[i] + dt * (u[i - 1] - 2 * u[i] + u[i + 1])
 
         spec = heat._stencil_spec
+        assert spec.ndim == 1
+        assert spec.order == 2
         assert "dt" in spec.closure_constants
         assert spec.closure_constants["dt"] == 0.01
 
@@ -98,6 +102,8 @@ class TestClosureConstantCapture:
             return u[i] + alpha * dt / dx ** 2 * (u[i - 1] - 2 * u[i] + u[i + 1])
 
         spec = diffusion._stencil_spec
+        assert spec.ndim == 1
+        assert spec.order == 2
         assert spec.closure_constants["dt"] == 0.01
         assert spec.closure_constants["dx"] == 0.1
         assert spec.closure_constants["alpha"] == 0.5
@@ -143,6 +149,8 @@ class TestClosureConstantCapture:
             return u[i] + dt * coeff * (u[i - 1] - 2 * u[i] + u[i + 1])
 
         spec = heat._stencil_spec
+        assert spec.ndim == 1
+        assert spec.order == 2
         accesses = extract_footprint(spec)
         spec.halo_widths = compute_halo(accesses, 1)
         cfg = compute_tile_config(spec, (1024,), hw)
@@ -165,6 +173,8 @@ class TestClosureConstantCapture:
             )
 
         spec = diffuse._stencil_spec
+        assert spec.ndim == 2
+        assert spec.order == 2
         accesses = extract_footprint(spec)
         spec.halo_widths = compute_halo(accesses, 2)
         cfg = compute_tile_config(spec, (256, 256), hw)
@@ -228,6 +238,8 @@ class TestFlopCounting:
             return u[i - 1] ** 2 + u[i + 1]
 
         spec = s._stencil_spec
+        assert spec.ndim == 1
+        assert spec.order == 2
         extract_footprint(spec)
         result = roofline_analysis(spec, hw)
         # Should count: 1 pow + 1 add = 2 flops minimum
@@ -244,6 +256,8 @@ class TestTemporalBlockingDimensionIndependentHalos:
             return u[i - 2, j] + u[i + 2, j] + u[i, j - 1] + u[i, j + 1]
 
         spec = asym._stencil_spec
+        assert spec.ndim == 2
+        assert spec.order == 4
         accesses = extract_footprint(spec)
         halo = compute_halo(accesses, 2)
         spec.halo_widths = halo

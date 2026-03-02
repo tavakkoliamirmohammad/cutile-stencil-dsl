@@ -26,7 +26,7 @@ dt = 0.01
 dx = 0.1
 
 
-@stencil(ndim=2, order=2, dtype="float64")
+@stencil(dtype="float64")
 def shallow_water_h(h, hu, hv, i, j):
     """Update height field h."""
     dhu_dx = (hu[i + 1, j] - hu[i - 1, j]) / (2 * dx)
@@ -34,14 +34,14 @@ def shallow_water_h(h, hu, hv, i, j):
     return h[i, j] - dt * H0 * (dhu_dx + dhv_dy)
 
 
-@stencil(ndim=2, order=2, dtype="float64")
+@stencil(dtype="float64")
 def shallow_water_hu(h, hu, i, j):
     """Update x-momentum field hu."""
     dh_dx = (h[i + 1, j] - h[i - 1, j]) / (2 * dx)
     return hu[i, j] - dt * g * dh_dx
 
 
-@stencil(ndim=2, order=2, dtype="float64")
+@stencil(dtype="float64")
 def shallow_water_hv(h, hv, i, j):
     """Update y-momentum field hv."""
     dh_dy = (h[i, j + 1] - h[i, j - 1]) / (2 * dx)

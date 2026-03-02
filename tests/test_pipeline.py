@@ -24,7 +24,10 @@ class TestAnalyzePipeline:
         def heat(u, i):
             return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
 
-        result = analyze(heat._stencil_spec, domain=(1024,))
+        spec = heat._stencil_spec
+        assert spec.ndim == 1
+        assert spec.order == 2
+        result = analyze(spec, domain=(1024,))
         assert isinstance(result, AnalysisResult)
         assert result.tile_config.tile_sizes[0] >= 32
         assert result.temporal_config.steps >= 1
@@ -36,7 +39,10 @@ class TestAnalyzePipeline:
         def lap(u, i, j):
             return u[i - 1, j] + u[i + 1, j] + u[i, j - 1] + u[i, j + 1] - 4 * u[i, j]
 
-        result = analyze(lap._stencil_spec, domain=(256, 256))
+        spec = lap._stencil_spec
+        assert spec.ndim == 2
+        assert spec.order == 2
+        result = analyze(spec, domain=(256, 256))
         assert len(result.tile_config.tile_sizes) == 2
         assert result.roofline.bound in ("memory", "compute")
 
@@ -45,6 +51,8 @@ class TestAnalyzePipeline:
         def heat(u, i):
             return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
 
+        assert heat._stencil_spec.ndim == 1
+        assert heat._stencil_spec.order == 2
         hw = HardwareSpec.from_preset("H100_SXM")
         result = analyze(heat._stencil_spec, domain=(1024,), hw=hw)
         assert result.roofline.peak_gpoints_s > 0
@@ -129,6 +137,8 @@ class TestCFLAnalysis:
         def s(u, i):
             return u[i - 1] + u[i + 1]
 
+        assert s._stencil_spec.ndim == 1
+        assert s._stencil_spec.order == 2
         cfl = compute_max_cfl(s._stencil_spec)
         assert cfl > 0
         assert cfl == 1.0  # 1 / (1 * (2/2))
@@ -138,6 +148,8 @@ class TestCFLAnalysis:
         def s(u, i, j):
             return u[i - 1, j] + u[i + 1, j]
 
+        assert s._stencil_spec.ndim == 2
+        assert s._stencil_spec.order == 2
         cfl = compute_max_cfl(s._stencil_spec)
         assert cfl == 0.5  # 1 / (2 * 1)
 
@@ -150,6 +162,10 @@ class TestCFLAnalysis:
         def s2(u, i):
             return u[i - 1] + u[i + 1]
 
+        assert s4._stencil_spec.ndim == 1
+        assert s4._stencil_spec.order == 4
+        assert s2._stencil_spec.ndim == 1
+        assert s2._stencil_spec.order == 2
         cfl4 = compute_max_cfl(s4._stencil_spec)
         cfl2 = compute_max_cfl(s2._stencil_spec)
         assert cfl4 < cfl2  # Higher order = tighter CFL
@@ -161,6 +177,8 @@ class TestCompile:
         def heat(u, i):
             return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
 
+        assert heat._stencil_spec.ndim == 1
+        assert heat._stencil_spec.order == 2
         result = compile(heat, domain=(1024,))
         assert isinstance(result, CompileResult)
         assert isinstance(result.analysis, AnalysisResult)
@@ -173,6 +191,8 @@ class TestCompile:
         def lap(u, i, j):
             return u[i - 1, j] + u[i + 1, j] + u[i, j - 1] + u[i, j + 1] - 4 * u[i, j]
 
+        assert lap._stencil_spec.ndim == 2
+        assert lap._stencil_spec.order == 2
         result = compile(lap, domain=(256, 256))
         assert isinstance(result, CompileResult)
         ast.parse(result.code)

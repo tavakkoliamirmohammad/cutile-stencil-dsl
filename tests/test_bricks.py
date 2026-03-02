@@ -189,6 +189,8 @@ class TestBrickedCodegen:
             def heat(u, i):
                 return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
             spec = heat._stencil_spec
+            assert spec.ndim == 1
+            assert spec.order == 2
             domain = (128,)
             brick_sizes = (32,)
         elif ndim == 2:
@@ -196,6 +198,8 @@ class TestBrickedCodegen:
             def lap2d(u, i, j):
                 return u[i-1, j] + u[i+1, j] + u[i, j-1] + u[i, j+1] - 4*u[i, j]
             spec = lap2d._stencil_spec
+            assert spec.ndim == 2
+            assert spec.order == 2
             domain = (128, 128)
             brick_sizes = (32, 32)
         else:
@@ -206,6 +210,8 @@ class TestBrickedCodegen:
                         + u[i, j, k-1] + u[i, j, k+1]
                         - 6 * u[i, j, k])
             spec = lap3d._stencil_spec
+            assert spec.ndim == 3
+            assert spec.order == 2
             domain = (64, 64, 64)
             brick_sizes = (16, 16, 16)
 
@@ -282,6 +288,8 @@ class TestCompileBricked:
         def lap(u, i, j):
             return u[i-1, j] + u[i+1, j] + u[i, j-1] + u[i, j+1] - 4*u[i, j]
 
+        assert lap._stencil_spec.ndim == 2
+        assert lap._stencil_spec.order == 2
         layout = BrickLayout(brick_sizes=(32, 32))
         result = compile(lap, domain=(128, 128), layout=layout)
         assert isinstance(result, CompileResult)

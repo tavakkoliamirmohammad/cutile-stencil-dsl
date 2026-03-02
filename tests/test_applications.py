@@ -28,6 +28,8 @@ class TestAdvectionUpwind:
             return u[i] - CFL * (u[i] - u[i - 1])
 
         spec = advect._stencil_spec
+        assert spec.ndim == 1
+        assert spec.order == 2
         accesses = extract_footprint(spec)
         spec.halo_widths = compute_halo(accesses, 1)
 
@@ -48,6 +50,8 @@ class TestAdvectionUpwind:
             return u[i] - CFL * (u[i] - u[i - 1])
 
         spec = advect._stencil_spec
+        assert spec.ndim == 1
+        assert spec.order == 2
         accesses = extract_footprint(spec)
         offsets = {a.offsets for a in accesses}
         assert (-1,) in offsets
@@ -78,6 +82,8 @@ class TestGrayScott:
         spec_u = gs_u._stencil_spec
         spec_v = gs_v._stencil_spec
         for sp in [spec_u, spec_v]:
+            assert sp.ndim == 2
+            assert sp.order == 2
             acc = extract_footprint(sp)
             sp.halo_widths = compute_halo(acc, 2)
 
@@ -115,6 +121,8 @@ class TestGrayScott:
             return u[i, j] + v[i, j]
 
         spec = gs._stencil_spec
+        assert spec.ndim == 2
+        assert spec.order == 2
         accesses = extract_footprint(spec)
         arr_names = {a.array_name for a in accesses}
         assert "u" in arr_names
@@ -140,6 +148,8 @@ class TestFDTDMaxwell:
         spec_E = upd_E._stencil_spec
         spec_H = upd_H._stencil_spec
         for sp in [spec_E, spec_H]:
+            assert sp.ndim == 1
+            assert sp.order == 2
             acc = extract_footprint(sp)
             sp.halo_widths = compute_halo(acc, 1)
 
@@ -173,6 +183,8 @@ class TestFDTDMaxwell:
             return E[i] + H[i] - H[i - 1]
 
         spec = upd_E._stencil_spec
+        assert spec.ndim == 1
+        assert spec.order == 2
         accesses = extract_footprint(spec)
         arr_names = {a.array_name for a in accesses}
         assert "E" in arr_names
@@ -194,6 +206,8 @@ class TestShallowWater:
             return h[i, j] - dt * H0 * (dhu + dhv)
 
         spec = sw_h._stencil_spec
+        assert spec.ndim == 2
+        assert spec.order == 2
         accesses = extract_footprint(spec)
         spec.halo_widths = compute_halo(accesses, 2)
 
@@ -207,6 +221,8 @@ class TestShallowWater:
             return h[i, j] + hu[i + 1, j] + hv[i, j + 1]
 
         spec = sw._stencil_spec
+        assert spec.ndim == 2
+        assert spec.order == 2
         accesses = extract_footprint(spec)
         arr_names = {a.array_name for a in accesses}
         assert "h" in arr_names
