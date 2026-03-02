@@ -102,17 +102,44 @@ class TestStencilCodegen:
         assert "ct.load" in code
         assert "ct.store" in code
 
-    def test_2d_uses_shifted_views(self):
+    def test_2d_uses_in_kernel_slice(self):
         code = _gen_2d().emit()
-        # 2D codegen uses shifted-view approach (no padding mode needed)
+        # 2D codegen uses in-kernel .slice() approach
         assert "ct.load" in code
         assert "ct.store" in code
+        assert ".slice(axis=" in code
 
     def test_3d_uses_three_bid(self):
         code = _gen_3d().emit()
         assert "ct.bid(0)" in code
         assert "ct.bid(1)" in code
         assert "ct.bid(2)" in code
+
+    def test_1d_uses_slice_naming(self):
+        code = _gen_1d().emit()
+        # New naming: u_m1, u_0, u_p1 (not v_u_offm1)
+        assert "u_m1" in code
+        assert "u_0" in code
+        assert "u_p1" in code
+        assert ".slice(axis=0" in code
+        # Launcher should not create shifted views
+        assert "v_u_" not in code
+
+    def test_1d_kernel_params_simple(self):
+        code = _gen_1d().emit()
+        # Kernel params: just the array + output + TILE + HALO
+        assert "heat_kernel(u, output, TILE: ConstInt, HALO: ConstInt)" in code
+
+    def test_2d_kernel_has_halo_params(self):
+        code = _gen_2d().emit()
+        assert "HX: ConstInt" in code
+        assert "HY: ConstInt" in code
+
+    def test_3d_kernel_has_halo_params(self):
+        code = _gen_3d().emit()
+        assert "HX: ConstInt" in code
+        assert "HY: ConstInt" in code
+        assert "HZ: ConstInt" in code
 
     def test_emit_to_file(self, tmp_path):
         gen = _gen_1d()

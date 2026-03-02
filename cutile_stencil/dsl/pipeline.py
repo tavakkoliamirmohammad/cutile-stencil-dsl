@@ -1,13 +1,19 @@
-"""One-call analysis pipeline for stencil specifications.
+"""One-call analysis and compilation pipeline for stencil specifications.
 
-Eliminates the 6-step boilerplate in every example by providing a single
-``analyze()`` function that runs the full analysis chain.
+Provides ``analyze()`` for analysis-only and ``compile()`` for the full
+analyze + codegen pipeline in a single call.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import ast
+import importlib.util
+import tempfile
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional, Tuple
+
+import numpy as np
 
 from cutile_stencil.dsl.types import (
     StencilSpec, HardwareSpec, TileConfig, TemporalConfig, RooflineResult,
@@ -26,6 +32,118 @@ class AnalysisResult:
     temporal_config: TemporalConfig
     roofline: RooflineResult
     warnings: list
+
+
+@dataclass
+class CompileResult:
+    """Result of compile(): analysis + generated kernel code."""
+    spec: StencilSpec
+    analysis: AnalysisResult
+    code: str
+    _emitted_path: Optional[Path] = field(default=None, repr=False)
+
+    def print_summary(self) -> None:
+        """Print analysis summary: footprint, tiling, temporal, roofline."""
+        spec = self.spec
+        ar = self.analysis
+        print(f"Stencil: {spec.name}, ndim={spec.ndim}, order={spec.order}")
+        print(f"Footprint: {len(spec.accesses)} accesses, halo={spec.halo_widths}")
+        print(f"  Inputs: {spec.inputs}")
+        tc = ar.tile_config
+        print(f"Tile config: sizes={tc.tile_sizes}, "
+              f"halo={tc.halo_widths}, overhead={tc.overhead_fraction:.4f}")
+        tmp = ar.temporal_config
+        print(f"Temporal blocking: {tmp.steps} steps, "
+              f"expanded_halo={tmp.expanded_halo}, "
+              f"BW reduction={tmp.bandwidth_reduction_factor:.1f}x")
+        rf = ar.roofline
+        print(f"Roofline: {rf.flops_per_point} FLOPs/pt, "
+              f"{rf.bytes_per_point} B/pt, AI={rf.arithmetic_intensity:.3f}")
+        print(f"  Bound: {rf.bound}, peak ~ {rf.peak_gpoints_s:.2f} Gpts/s")
+        if ar.warnings:
+            for w in ar.warnings:
+                print(f"  WARNING: {w}")
+
+    def emit_to_file(self, path: str | Path) -> Path:
+        """Write generated kernel code to a file. Returns the Path."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.code)
+        self._emitted_path = path
+        return path
+
+    def validate(self, *inputs, atol: float = 1e-10) -> None:
+        """Validate GPU kernel against NumPy reference.
+
+        Parameters
+        ----------
+        *inputs : numpy.ndarray
+            Input arrays (full arrays including halo). For single-input
+            stencils pass one array; for multi-input pass one per field.
+        atol : float
+            Absolute tolerance for np.allclose.
+
+        Raises
+        ------
+        AssertionError
+            If GPU result differs from CPU reference beyond tolerance.
+        """
+        import cupy as cp
+
+        spec = self.spec
+
+        # Emit to temp file if not already emitted
+        if self._emitted_path is None:
+            tmp = tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w")
+            tmp.write(self.code)
+            tmp.close()
+            self._emitted_path = Path(tmp.name)
+
+        # Load generated module
+        mod_spec = importlib.util.spec_from_file_location(
+            f"kernel_{spec.name}", str(self._emitted_path)
+        )
+        mod = importlib.util.module_from_spec(mod_spec)
+        mod_spec.loader.exec_module(mod)
+        launcher = getattr(mod, f"launch_{spec.name}")
+
+        # Determine input arrays
+        if len(inputs) == 0:
+            raise ValueError("At least one input array is required")
+
+        multi_input = len(spec.inputs) > 1
+
+        # GPU execution
+        gpu_inputs = [cp.asarray(arr, dtype=cp.float64) for arr in inputs]
+        out_gpu = cp.zeros_like(gpu_inputs[0])
+
+        if multi_input:
+            launcher(*gpu_inputs, out_gpu)
+        else:
+            launcher(gpu_inputs[0], out_gpu)
+        cp.cuda.Device().synchronize()
+        gpu_result = cp.asnumpy(out_gpu)
+
+        # CPU reference
+        from cutile_stencil.reference.stencil_ref import _ArrayProxy
+        halo = spec.halo_widths
+
+        if multi_input:
+            proxies = [_ArrayProxy(arr, halo) for arr in inputs]
+            idx_args = [0] * spec.ndim
+            cpu_interior = spec.update_fn(*proxies, *idx_args)
+            cpu_ref = inputs[0].copy()
+            interior = tuple(slice(h, s - h) for h, s in zip(halo, cpu_ref.shape))
+            cpu_ref[interior] = cpu_interior
+        else:
+            from cutile_stencil.reference.stencil_ref import apply_stencil
+            cpu_ref = apply_stencil(inputs[0], spec)
+            interior = tuple(slice(h, s - h) for h, s in zip(halo, inputs[0].shape))
+
+        assert np.allclose(
+            gpu_result[interior], cpu_ref[interior], atol=atol
+        ), f"GPU kernel mismatch for {spec.name}!"
+        print(f"  ✓ GPU kernel ({spec.name}) matches NumPy reference")
 
 
 def analyze(
@@ -79,3 +197,50 @@ def analyze(
         roofline=roof,
         warnings=warnings,
     )
+
+
+def compile(
+    stencil_fn,
+    domain: Tuple[int, ...],
+    hw: HardwareSpec | None = None,
+) -> CompileResult:
+    """One-call analyze + codegen. Returns a CompileResult with generated code.
+
+    Parameters
+    ----------
+    stencil_fn : decorated stencil function or StencilSpec
+        The stencil to compile. Accepts either a @stencil-decorated function
+        (which has ._stencil_spec) or a StencilSpec directly.
+    domain : tuple of int
+        Domain size per dimension (interior points).
+    hw : HardwareSpec, optional
+        GPU hardware parameters. Defaults to HardwareSpec().
+
+    Returns
+    -------
+    CompileResult
+        Contains analysis results and generated kernel code.
+    """
+    # Extract spec
+    if isinstance(stencil_fn, StencilSpec):
+        spec = stencil_fn
+    elif hasattr(stencil_fn, '_stencil_spec'):
+        spec = stencil_fn._stencil_spec
+    else:
+        raise TypeError(
+            f"Expected a @stencil-decorated function or StencilSpec, "
+            f"got {type(stencil_fn).__name__}"
+        )
+
+    # Run analysis
+    ar = analyze(spec, domain, hw)
+
+    # Generate code
+    from cutile_stencil.codegen.stencil_codegen import StencilCodeGenerator
+    gen = StencilCodeGenerator(spec, ar.tile_config, ar.temporal_config)
+    code = gen.emit()
+
+    # Validate syntax
+    ast.parse(code)
+
+    return CompileResult(spec=spec, analysis=ar, code=code)

@@ -1,10 +1,11 @@
-"""Tests for the analysis pipeline, decorator validation, and CFL analysis."""
+"""Tests for the analysis pipeline, compile, decorator validation, and CFL analysis."""
 
+import ast
 import pytest
 from cutile_stencil.dsl.decorator import stencil
 from cutile_stencil.dsl.types import StencilSpec, HardwareSpec
 from cutile_stencil.dsl.registry import clear
-from cutile_stencil.dsl.pipeline import analyze, AnalysisResult
+from cutile_stencil.dsl.pipeline import analyze, AnalysisResult, compile, CompileResult
 from cutile_stencil.dsl.boundary import BoundarySpec
 from cutile_stencil.analysis.footprint import compute_max_cfl, extract_footprint
 from cutile_stencil.config import GPU_PRESETS
@@ -152,6 +153,75 @@ class TestCFLAnalysis:
         cfl4 = compute_max_cfl(s4._stencil_spec)
         cfl2 = compute_max_cfl(s2._stencil_spec)
         assert cfl4 < cfl2  # Higher order = tighter CFL
+
+
+class TestCompile:
+    def test_compile_1d_returns_compile_result(self):
+        @stencil(ndim=1, order=2)
+        def heat(u, i):
+            return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
+
+        result = compile(heat, domain=(1024,))
+        assert isinstance(result, CompileResult)
+        assert isinstance(result.analysis, AnalysisResult)
+        assert result.spec.name == "heat"
+        assert len(result.code) > 0
+        ast.parse(result.code)
+
+    def test_compile_2d(self):
+        @stencil(ndim=2, order=2)
+        def lap(u, i, j):
+            return u[i - 1, j] + u[i + 1, j] + u[i, j - 1] + u[i, j + 1] - 4 * u[i, j]
+
+        result = compile(lap, domain=(256, 256))
+        assert isinstance(result, CompileResult)
+        ast.parse(result.code)
+        assert ".slice(axis=" in result.code
+
+    def test_compile_accepts_spec_directly(self):
+        @stencil(ndim=1, order=2)
+        def heat(u, i):
+            return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
+
+        result = compile(heat._stencil_spec, domain=(1024,))
+        assert isinstance(result, CompileResult)
+
+    def test_compile_with_hw(self):
+        @stencil(ndim=1, order=2)
+        def heat(u, i):
+            return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
+
+        hw = HardwareSpec.from_preset("H100_SXM")
+        result = compile(heat, domain=(1024,), hw=hw)
+        assert result.analysis.roofline.peak_gpoints_s > 0
+
+    def test_compile_emit_to_file(self, tmp_path):
+        @stencil(ndim=1, order=2)
+        def heat(u, i):
+            return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
+
+        result = compile(heat, domain=(1024,))
+        out = result.emit_to_file(tmp_path / "heat_kernel.py")
+        assert out.exists()
+        ast.parse(out.read_text())
+
+    def test_compile_invalid_input_raises(self):
+        with pytest.raises(TypeError, match="Expected"):
+            compile("not a stencil", domain=(1024,))
+
+    def test_compile_code_uses_slice(self):
+        @stencil(ndim=1, order=2)
+        def heat(u, i):
+            return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
+
+        result = compile(heat, domain=(1024,))
+        assert ".slice(axis=" in result.code
+        assert "HALO" in result.code
+
+    def test_compile_importable_from_top_level(self):
+        from cutile_stencil import compile, CompileResult
+        assert callable(compile)
+        assert CompileResult is not None
 
 
 class TestGPUPresetsExport:

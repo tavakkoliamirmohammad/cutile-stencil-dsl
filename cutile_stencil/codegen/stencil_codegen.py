@@ -1,8 +1,8 @@
 """Generate cuTile kernel Python files from StencilSpec.
 
-Strategy: shifted-view approach for all dimensions.
-Each unique stencil access becomes a pre-shifted array view so that
-ct.load always uses the base (power-of-two) tile size.
+Strategy: in-kernel .slice() approach for all dimensions.
+Each unique stencil access creates a shifted view inside the kernel via
+Array.slice(), so the launcher just passes original arrays + constants.
 """
 
 from __future__ import annotations
@@ -46,7 +46,46 @@ class StencilCodeGenerator:
         path.write_text(self.emit())
 
     # ------------------------------------------------------------------
-    # 1D: shifted-view approach (like stencil1d.py)
+    # Offset formatting helper
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _format_offset(off: int) -> str:
+        """Format an integer offset for use in variable names.
+
+        0 → "0", +k → "pk", -k → "mk"
+        """
+        if off == 0:
+            return "0"
+        elif off > 0:
+            return f"p{off}"
+        else:
+            return f"m{abs(off)}"
+
+    # ------------------------------------------------------------------
+    # Build deduplicated access names (shared by 1D/2D/3D)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _build_access_names(spec: StencilSpec):
+        """Build deduplicated list of (view_name, offsets_tuple, array_name).
+
+        Naming: {array}_{off0}[_{off1}[_{off2}]]
+        e.g. u_m1, E_0, u_m2_0, u_0_m1
+        """
+        seen = {}
+        access_names = []
+        for acc in spec.accesses:
+            key = (acc.array_name, acc.offsets)
+            if key not in seen:
+                off_parts = "_".join(
+                    StencilCodeGenerator._format_offset(o) for o in acc.offsets
+                )
+                vname = f"{acc.array_name}_{off_parts}"
+                seen[key] = vname
+                access_names.append((vname, acc.offsets, acc.array_name))
+        return access_names
+
+    # ------------------------------------------------------------------
+    # 1D: in-kernel .slice() approach
     # ------------------------------------------------------------------
     def _emit_1d(self) -> str:
         e = CodeEmitter()
@@ -56,95 +95,67 @@ class StencilCodeGenerator:
 
         self._emit_header(e)
         e.blank()
-
-        # Constant
         e.line("ConstInt = ct.Constant[int]")
         e.blank()
 
-        # Build the list of shifted views we need (per-array, per-offset)
-        seen = set()
-        view_names = []
-        for acc in spec.accesses:
-            key = (acc.array_name, acc.offsets[0])
-            if key not in seen:
-                seen.add(key)
-                off = acc.offsets[0]
-                vname = f"v_{acc.array_name}_off{off:+d}".replace("+", "p").replace("-", "m")
-                view_names.append((vname, off, acc.array_name))
+        access_names = self._build_access_names(spec)
 
         # Kernel
+        multi_input = len(spec.inputs) > 1
+        input_params = ", ".join(spec.inputs) if multi_input else spec.inputs[0]
         e.line("@ct.kernel")
-        params = ", ".join(vn for vn, _, _ in view_names)
-        e.line(f"def {spec.name}_kernel({params}, output, TILE: ConstInt):")
+        e.line(f"def {spec.name}_kernel({input_params}, output, TILE: ConstInt, HALO: ConstInt):")
         with e.indent():
             e.line("pid = ct.bid(0)")
-            for vn, _, _ in view_names:
-                e.line(f"t_{vn} = ct.load({vn}, index=(pid,), shape=(TILE,))")
-            # Build the stencil expression from the update_fn source
-            self._emit_stencil_expr_1d(e, view_names)
-            e.line("ct.store(output, index=(pid,), tile=result)")
+            # Compute interior size from first input array
+            first_arr = spec.inputs[0]
+            e.line(f"n = {first_arr}.shape[0] - 2 * HALO")
+            # Create sliced views for each unique access
+            for vname, offsets, arr_name in access_names:
+                off = offsets[0]
+                start = self._offset_expr("HALO", off)
+                stop = self._offset_expr("HALO", off, add_n=True)
+                e.line(f"{vname} = {arr_name}.slice(axis=0, start={start}, stop={stop})")
+            # Output view
+            e.line("out = output.slice(axis=0, start=HALO, stop=HALO + n)")
+            # Load tiles
+            for vname, _, _ in access_names:
+                e.line(f"t_{vname} = ct.load({vname}, index=(pid,), shape=(TILE,))")
+            # Stencil expression
+            self._emit_stencil_expr(e, access_names)
+            e.line("ct.store(out, index=(pid,), tile=result)")
 
-        self._emit_launcher_1d(e, view_names, ts, halo)
-        self._emit_benchmark_1d(e, view_names, ts, halo)
+        self._emit_launcher_1d(e, ts, halo)
+        self._emit_benchmark_1d(e, ts, halo)
         return e.render()
 
-    def _emit_stencil_expr_1d(self, e: CodeEmitter, view_names):
-        """Build the arithmetic expression via AST transform."""
+    def _emit_launcher_1d(self, e: CodeEmitter, ts, halo):
+        e.blank()
+        e.blank()
         spec = self.spec
-        # Build term_names matching accesses order, mapping each access
-        # to the corresponding tile variable
-        offset_to_tile = {}
-        for vn, off, arr_name in view_names:
-            offset_to_tile[(arr_name, (off,))] = f"t_{vn}"
-
-        term_names = []
-        for acc in spec.accesses:
-            key = (acc.array_name, acc.offsets)
-            term_names.append(offset_to_tile.get(key, f"t_unknown"))
-
-        try:
-            expr_src = transform_stencil_expr(
-                spec.update_fn, spec.accesses, spec.ndim, term_names
-            )
-            e.line(f"result = {expr_src}")
-        except Exception:
-            # Fallback: sum of tiles
-            terms = [f"t_{vn}" for vn, _, _ in view_names]
-            e.line(f"result = {' + '.join(terms)}")
-
-    def _emit_launcher_1d(self, e: CodeEmitter, view_names, ts, halo):
-        e.blank()
-        e.blank()
-        multi_input = len(self.spec.inputs) > 1
+        multi_input = len(spec.inputs) > 1
         if multi_input:
-            input_params = ", ".join(self.spec.inputs)
-            e.line(f"def launch_{self.spec.name}({input_params}, output, stream=None):")
+            input_params = ", ".join(spec.inputs)
+            e.line(f"def launch_{spec.name}({input_params}, output, stream=None):")
         else:
-            e.line(f"def launch_{self.spec.name}(u, output, stream=None):")
+            e.line(f"def launch_{spec.name}(u, output, stream=None):")
         with e.indent():
             e.line(f"TILE = {ts}")
-            e.line(f"halo = {halo}")
-            first_input = self.spec.inputs[0] if multi_input else "u"
+            e.line(f"HALO = {halo}")
+            first_input = spec.inputs[0] if multi_input else "u"
             e.line(f"N = {first_input}.shape[0]")
             e.line("if stream is None:")
             with e.indent():
                 e.line("stream = cp.cuda.get_current_stream()")
-            # Create shifted views
-            for vn, off, arr_name in view_names:
-                src = arr_name if multi_input else "u"
-                if off == 0:
-                    e.line(f"{vn} = {src}[halo:N - halo]")
-                elif off > 0:
-                    e.line(f"{vn} = {src}[halo + {off}:N - halo + {off}]")
-                else:
-                    e.line(f"{vn} = {src}[halo - {abs(off)}:N - halo - {abs(off)}]")
-            e.line("out_view = output[halo:N - halo]")
-            e.line("n_interior = N - 2 * halo")
+            e.line("n_interior = N - 2 * HALO")
             e.line("grid = (ct.cdiv(n_interior, TILE),)")
-            args = ", ".join(vn for vn, _, _ in view_names)
-            e.line(f"ct.launch(stream, grid, {self.spec.name}_kernel, ({args}, out_view, TILE))")
+            if multi_input:
+                args = ", ".join(spec.inputs)
+            else:
+                args = "u"
+            e.line(f"ct.launch(stream, grid, {spec.name}_kernel, ({args}, output, TILE, HALO))")
 
-    def _emit_benchmark_1d(self, e: CodeEmitter, view_names, ts, halo):
+    def _emit_benchmark_1d(self, e: CodeEmitter, ts, halo):
         e.blank()
         e.blank()
         e.line("if __name__ == '__main__':")
@@ -164,7 +175,7 @@ class StencilCodeGenerator:
             e.line("print('Kernel launched successfully')")
 
     # ------------------------------------------------------------------
-    # 2D: shifted-view approach (same pattern as 1D)
+    # 2D: in-kernel .slice() approach
     # ------------------------------------------------------------------
     def _emit_2d(self) -> str:
         e = CodeEmitter()
@@ -177,25 +188,14 @@ class StencilCodeGenerator:
         e.line("ConstInt = ct.Constant[int]")
         e.blank()
 
-        view_names = self._build_view_names_nd(spec)
-        self._emit_kernel_nd(e, spec, view_names, 2, (tx, ty))
-        self._emit_launcher_nd(e, spec, view_names, 2, (tx, ty), (hx, hy))
+        access_names = self._build_access_names(spec)
+        self._emit_kernel_nd(e, spec, access_names, 2, (tx, ty), (hx, hy))
+        self._emit_launcher_nd(e, spec, 2, (tx, ty), (hx, hy))
         self._emit_benchmark_nd(e, spec, 2, (tx, ty), (hx, hy))
         return e.render()
 
-    def _emit_stencil_expr_nd(self, e: CodeEmitter, spec: StencilSpec, term_names):
-        """Emit the stencil expression via AST transform (inlines intermediates)."""
-        try:
-            expr_src = transform_stencil_expr(
-                spec.update_fn, spec.accesses, spec.ndim, term_names
-            )
-            e.line(f"result = {expr_src}")
-        except Exception:
-            # Fallback
-            e.line(f"result = {' + '.join(term_names)}")
-
     # ------------------------------------------------------------------
-    # 3D: shifted-view approach (same pattern as 1D/2D)
+    # 3D: in-kernel .slice() approach
     # ------------------------------------------------------------------
     def _emit_3d(self) -> str:
         e = CodeEmitter()
@@ -208,69 +208,70 @@ class StencilCodeGenerator:
         e.line("ConstInt = ct.Constant[int]")
         e.blank()
 
-        view_names = self._build_view_names_nd(spec)
-        self._emit_kernel_nd(e, spec, view_names, 3, (tx, ty, tz))
-        self._emit_launcher_nd(e, spec, view_names, 3, (tx, ty, tz), (hx, hy, hz))
+        access_names = self._build_access_names(spec)
+        self._emit_kernel_nd(e, spec, access_names, 3, (tx, ty, tz), (hx, hy, hz))
+        self._emit_launcher_nd(e, spec, 3, (tx, ty, tz), (hx, hy, hz))
         self._emit_benchmark_nd(e, spec, 3, (tx, ty, tz), (hx, hy, hz))
         return e.render()
 
     # ------------------------------------------------------------------
-    # Shared nD helpers (2D/3D shifted-view kernel, launcher, benchmark)
+    # Shared nD helpers: kernel, launcher, benchmark
     # ------------------------------------------------------------------
-    @staticmethod
-    def _build_view_names_nd(spec: StencilSpec):
-        """Build deduplicated list of (view_name, offsets_tuple, array_name)."""
-        seen = {}
-        view_names = []
-        for acc in spec.accesses:
-            key = (acc.array_name, acc.offsets)
-            if key not in seen:
-                parts = "_".join(f"{o:+d}" for o in acc.offsets)
-                vname = f"v_{acc.array_name}_{parts}".replace("+", "p").replace("-", "m")
-                seen[key] = vname
-                view_names.append((vname, acc.offsets, acc.array_name))
-        return view_names
-
-    def _emit_kernel_nd(self, e: CodeEmitter, spec, view_names, ndim, tile_sizes):
-        """Emit an nD kernel using shifted-view parameters (power-of-two loads)."""
+    def _emit_kernel_nd(self, e: CodeEmitter, spec, access_names, ndim, tile_sizes, halo_widths):
+        """Emit an nD kernel using in-kernel .slice() for shifted views."""
         bid_vars = ["bx", "by", "bz"][:ndim]
         tile_vars = ["TX", "TY", "TZ"][:ndim]
+        halo_vars = ["HX", "HY", "HZ"][:ndim]
+        n_vars = ["nx", "ny", "nz"][:ndim]
+
         tile_const_params = ", ".join(f"{tv}: ConstInt" for tv in tile_vars)
+        halo_const_params = ", ".join(f"{hv}: ConstInt" for hv in halo_vars)
+
+        multi_input = len(spec.inputs) > 1
+        input_params = ", ".join(spec.inputs) if multi_input else spec.inputs[0]
 
         e.line("@ct.kernel")
-        params = ", ".join(vn for vn, _, _ in view_names)
-        e.line(f"def {spec.name}_kernel({params}, output, {tile_const_params}):")
+        e.line(f"def {spec.name}_kernel({input_params}, output, {tile_const_params}, {halo_const_params}):")
         with e.indent():
             for i, bv in enumerate(bid_vars):
                 e.line(f"{bv} = ct.bid({i})")
+            # Compute interior sizes
+            first_arr = spec.inputs[0]
+            for d in range(ndim):
+                e.line(f"{n_vars[d]} = {first_arr}.shape[{d}] - 2 * {halo_vars[d]}")
+            # Create sliced views for each unique access
+            for vname, offsets, arr_name in access_names:
+                slice_chain = arr_name
+                for d in range(ndim):
+                    off = offsets[d]
+                    start = self._offset_expr(halo_vars[d], off)
+                    stop = self._offset_expr(halo_vars[d], off, add_n=True, n_var=n_vars[d])
+                    slice_chain = f"{slice_chain}.slice(axis={d}, start={start}, stop={stop})"
+                e.line(f"{vname} = {slice_chain}")
+            # Output view (all-zero offsets)
+            out_chain = "output"
+            for d in range(ndim):
+                out_chain = f"{out_chain}.slice(axis={d}, start={halo_vars[d]}, stop={halo_vars[d]} + {n_vars[d]})"
+            e.line(f"out = {out_chain}")
+            # Load tiles
             shape_tuple = ", ".join(tile_vars)
             idx_tuple = ", ".join(bid_vars)
-            for vn, _, _ in view_names:
-                e.line(f"t_{vn} = ct.load({vn}, index=({idx_tuple}), shape=({shape_tuple}))")
+            for vname, _, _ in access_names:
+                e.line(f"t_{vname} = ct.load({vname}, index=({idx_tuple}), shape=({shape_tuple}))")
             e.blank()
-            # Map accesses → tile variables
-            offset_to_tile = {(vn_arr, offs): f"t_{vn}" for vn, offs, vn_arr in view_names}
+            # Stencil expression
+            offset_to_tile = {(arr, offs): f"t_{vn}" for vn, offs, arr in access_names}
             term_names = [offset_to_tile[(acc.array_name, acc.offsets)] for acc in spec.accesses]
             self._emit_stencil_expr_nd(e, spec, term_names)
             e.blank()
-            e.line(f"ct.store(output, index=({idx_tuple}), tile=result)")
+            e.line(f"ct.store(out, index=({idx_tuple}), tile=result)")
 
-    @staticmethod
-    def _slice_expr(h_var: str, off: int, n_var: str) -> str:
-        """Format a Python slice string: ``h+off : N-h+off``."""
-        if off == 0:
-            return f"{h_var}:{n_var} - {h_var}"
-        elif off > 0:
-            return f"{h_var} + {off}:{n_var} - {h_var} + {off}"
-        else:
-            return f"{h_var} - {abs(off)}:{n_var} - {h_var} - {abs(off)}"
-
-    def _emit_launcher_nd(self, e, spec, view_names, ndim, tile_sizes, halo_widths):
-        """Emit an nD launcher that creates shifted views and launches the kernel."""
+    def _emit_launcher_nd(self, e, spec, ndim, tile_sizes, halo_widths):
+        """Emit an nD launcher that just passes arrays + constants."""
         multi_input = len(spec.inputs) > 1
-        h_vars = ["hx", "hy", "hz"][:ndim]
-        n_vars = ["Nx", "Ny", "Nz"][:ndim]
         t_vars = ["TX", "TY", "TZ"][:ndim]
+        h_vars = ["HX", "HY", "HZ"][:ndim]
+        n_vars = ["Nx", "Ny", "Nz"][:ndim]
 
         e.blank()
         e.blank()
@@ -287,23 +288,17 @@ class StencilCodeGenerator:
             e.line("if stream is None:")
             with e.indent():
                 e.line("stream = cp.cuda.get_current_stream()")
-            # Create shifted views
-            for vn, offsets, arr_name in view_names:
-                src = arr_name if multi_input else "u_in"
-                slices = ", ".join(
-                    self._slice_expr(h_vars[d], offsets[d], n_vars[d])
-                    for d in range(ndim)
-                )
-                e.line(f"{vn} = {src}[{slices}]")
-            out_slices = ", ".join(f"{h_vars[d]}:{n_vars[d]} - {h_vars[d]}" for d in range(ndim))
-            e.line(f"out_view = u_out[{out_slices}]")
             grid_parts = ", ".join(
                 f"ct.cdiv({n_vars[d]} - 2 * {h_vars[d]}, {t_vars[d]})" for d in range(ndim)
             )
             e.line(f"grid = ({grid_parts})")
-            args = ", ".join(vn for vn, _, _ in view_names)
+            if multi_input:
+                args = ", ".join(spec.inputs)
+            else:
+                args = "u_in"
             t_args = ", ".join(t_vars)
-            e.line(f"ct.launch(stream, grid, {spec.name}_kernel, ({args}, out_view, {t_args}))")
+            h_args = ", ".join(h_vars)
+            e.line(f"ct.launch(stream, grid, {spec.name}_kernel, ({args}, u_out, {t_args}, {h_args}))")
 
     def _emit_benchmark_nd(self, e, spec, ndim, tile_sizes, halo_widths):
         """Emit an nD benchmark __main__ block."""
@@ -323,6 +318,68 @@ class StencilCodeGenerator:
             e.line(f"launch_{spec.name}(u, out)")
             e.line("print('Kernel launched successfully')")
 
+    # ------------------------------------------------------------------
+    # Stencil expression emission
+    # ------------------------------------------------------------------
+    def _emit_stencil_expr(self, e: CodeEmitter, access_names):
+        """Build the arithmetic expression via AST transform (1D)."""
+        spec = self.spec
+        offset_to_tile = {}
+        for vname, offsets, arr_name in access_names:
+            offset_to_tile[(arr_name, offsets)] = f"t_{vname}"
+
+        term_names = []
+        for acc in spec.accesses:
+            key = (acc.array_name, acc.offsets)
+            term_names.append(offset_to_tile.get(key, "t_unknown"))
+
+        try:
+            expr_src = transform_stencil_expr(
+                spec.update_fn, spec.accesses, spec.ndim, term_names
+            )
+            e.line(f"result = {expr_src}")
+        except Exception:
+            terms = [f"t_{vn}" for vn, _, _ in access_names]
+            e.line(f"result = {' + '.join(terms)}")
+
+    def _emit_stencil_expr_nd(self, e: CodeEmitter, spec: StencilSpec, term_names):
+        """Emit the stencil expression via AST transform (nD)."""
+        try:
+            expr_src = transform_stencil_expr(
+                spec.update_fn, spec.accesses, spec.ndim, term_names
+            )
+            e.line(f"result = {expr_src}")
+        except Exception:
+            e.line(f"result = {' + '.join(term_names)}")
+
+    # ------------------------------------------------------------------
+    # Offset expression helpers for .slice() calls
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _offset_expr(halo_var: str, off: int, add_n: bool = False, n_var: str = "n") -> str:
+        """Build a start/stop expression for .slice().
+
+        start: HALO + off
+        stop:  HALO + off + n
+        """
+        if add_n:
+            if off == 0:
+                return f"{halo_var} + {n_var}"
+            elif off > 0:
+                return f"{halo_var} + {off} + {n_var}"
+            else:
+                return f"{halo_var} - {abs(off)} + {n_var}"
+        else:
+            if off == 0:
+                return f"{halo_var}"
+            elif off > 0:
+                return f"{halo_var} + {off}"
+            else:
+                return f"{halo_var} - {abs(off)}"
+
+    # ------------------------------------------------------------------
+    # Header / closure constants
+    # ------------------------------------------------------------------
     def _emit_header(self, e: CodeEmitter):
         e.line(f'"""cuTile kernel for {self.spec.name} stencil (auto-generated)."""')
         e.blank()
