@@ -1,10 +1,6 @@
 # cuTile Stencil DSL
 
-High-order stencil compilation and tile-based iterative solvers via [cuTile](https://github.com/NVIDIA/cutile). PhD research framework implementing:
-
-- **Direction 8**: High-order stencil compilation via tile abstractions
-- **Direction 9**: Tile-based iterative solvers for sparse linear systems
-
+High-order stencil compilation and tile-based iterative solvers via [cuTile](https://github.com/NVIDIA/cutile).
 ## Architecture
 
 The framework has two layers:
