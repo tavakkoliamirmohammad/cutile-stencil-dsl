@@ -21,7 +21,7 @@ cutile_stencil/
 
 ```bash
 # Clone and create virtual environment
-git clone <repo-url> && cd cutile-stencil-dsl
+git clone https://github.com/tavakkoliamirmohammad/cutile-stencil-dsl && cd cutile-stencil-dsl
 python -m venv venv
 source venv/bin/activate
 
