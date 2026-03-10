@@ -8,6 +8,8 @@ from cutile_stencil.dsl.registry import clear
 from cutile_stencil.analysis.footprint import extract_footprint, compute_halo
 from cutile_stencil.reference.stencil_ref import apply_stencil, time_march, _ArrayProxy
 
+from conftest import gpu_required
+
 
 
 
@@ -231,18 +233,22 @@ class TestShallowWater:
 
 
 class TestExampleSmoke:
+    @gpu_required
     def test_advection_upwind_example(self):
         from examples.advection_upwind import main
         main()
 
+    @gpu_required
     def test_gray_scott_example(self):
         from examples.gray_scott import main
         main()
 
+    @gpu_required
     def test_shallow_water_example(self):
         from examples.shallow_water import main
         main()
 
+    @gpu_required
     def test_fdtd_maxwell_example(self):
         from examples.fdtd_maxwell_1d import main
         main()

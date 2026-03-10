@@ -28,8 +28,11 @@ git clone https://github.com/tavakkoliamirmohammad/cutile-stencil-dsl && cd cuti
 python -m venv venv
 source venv/bin/activate
 
-# Install dependencies
-pip install numpy pytest
+# Install (CPU only — DSL, analysis, codegen, and tests)
+pip install -e ".[test]"
+
+# Install with GPU support (adds cuda-tile and cupy)
+pip install -e ".[gpu,test]"
 ```
 
 ## Running Tests

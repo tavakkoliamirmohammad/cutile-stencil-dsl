@@ -4,18 +4,22 @@
 import shutil
 import pytest
 
+from conftest import gpu_required
 
 
+@gpu_required
 def test_heat_1d():
     from examples.heat_1d import main
     main()
 
 
+@gpu_required
 def test_wave_2d():
     from examples.wave_2d import main
     main()
 
 
+@gpu_required
 def test_laplacian_3d():
     from examples.laplacian_3d import main
     main()
@@ -31,6 +35,7 @@ def test_mixed_precision_cg():
     main()
 
 
+@gpu_required
 def test_heat_2d_bricked():
     from examples.heat_2d_bricked import main
     main()
