@@ -8,6 +8,8 @@ import pytest
 from cutile_stencil.dsl.types import BrickLayout
 from cutile_stencil.layout.bricks import to_bricks, from_bricks
 
+from conftest import gpu_required
+
 
 # ── BrickLayout dataclass tests ─────────────────────────────────────
 
@@ -339,6 +341,7 @@ class TestCompileBricked:
 class TestBrickedGPUValidation:
     """Validate bricked GPU kernels against NumPy reference."""
 
+    @gpu_required
     def test_validate_bricked_2d_heat(self):
         from cutile_stencil.dsl.decorator import stencil
         from cutile_stencil.dsl.registry import clear
@@ -359,6 +362,7 @@ class TestBrickedGPUValidation:
         flat = np.random.randn(domain[0] + 2*hx, domain[1] + 2*hy)
         result.validate(flat)
 
+    @gpu_required
     def test_validate_bricked_1d_heat(self):
         from cutile_stencil.dsl.decorator import stencil
         from cutile_stencil.dsl.registry import clear
@@ -378,6 +382,7 @@ class TestBrickedGPUValidation:
         flat = np.random.randn(domain[0] + 2*h)
         result.validate(flat)
 
+    @gpu_required
     def test_validate_bricked_2d_laplacian(self):
         from cutile_stencil.dsl.decorator import stencil
         from cutile_stencil.dsl.registry import clear

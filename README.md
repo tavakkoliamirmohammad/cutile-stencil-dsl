@@ -1,5 +1,7 @@
 # cuTile Stencil DSL
 
+[![CI](https://github.com/tavakkoliamirmohammad/cutile-stencil-dsl/actions/workflows/ci.yml/badge.svg)](https://github.com/tavakkoliamirmohammad/cutile-stencil-dsl/actions/workflows/ci.yml)
+
 High-order stencil compilation and tile-based iterative solvers via [cuTile](https://github.com/NVIDIA/cutile).
 
 ## Architecture
