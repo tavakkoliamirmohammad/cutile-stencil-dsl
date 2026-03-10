@@ -7,9 +7,10 @@ name = "cutile-stencil"
 version = "0.1.0"
 description = "High-order stencil compilation and tile-based iterative solvers via cuTile"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24", "cuda-tile>=1.1,<1.2"]
+dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
+gpu = ["cuda-tile>=1.1,<1.2", "cupy-cuda13x"]
 test = ["pytest>=7.0"]
 benchmark = ["numba>=0.58", "tabulate>=0.9"]
 
