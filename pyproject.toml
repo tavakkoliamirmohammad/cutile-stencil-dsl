@@ -6,7 +6,22 @@ build-backend = "setuptools.build_meta"
 name = "cutile-stencil"
 version = "0.1.0"
 description = "High-order stencil compilation and tile-based iterative solvers via cuTile"
-requires-python = ">=3.10"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10,<3.14"
+authors = [
+    {name = "Amir Mohammad Tavakkoli", email = "tavakkoli.amirmohammad@gmail.com"},
+]
+keywords = ["stencil", "cuda", "gpu", "cutile", "hpc", "codegen"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]

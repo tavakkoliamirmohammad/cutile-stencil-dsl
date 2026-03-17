@@ -2,3 +2,8 @@ venv
 __pycache__
 .claude
 generated
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
