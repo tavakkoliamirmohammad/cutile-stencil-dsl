@@ -38,8 +38,9 @@ def compute_tile_config(
     domain_size: Tuple[int, ...],
     hw: HardwareSpec | None = None,
     candidate_sizes: List[int] | None = None,
+    candidate_mode: str = "power_of_2",
 ) -> TileConfig:
-    """Find optimal power-of-2 tile sizes that fit in shared memory.
+    """Find optimal tile sizes that fit in shared memory.
 
     Enumerates candidate tile sizes via N-dimensional product,
     picks the configuration that minimises halo overhead while fitting
@@ -54,13 +55,28 @@ def compute_tile_config(
     hw : HardwareSpec, optional
         GPU hardware parameters. Defaults to HardwareSpec().
     candidate_sizes : list of int, optional
-        Tile size candidates to enumerate. Defaults to [32, 64, 128, 256, 512, 1024].
+        Tile size candidates to enumerate. When provided, ``candidate_mode``
+        is ignored.
+    candidate_mode : str, optional
+        Predefined set of tile size candidates to use when ``candidate_sizes``
+        is None. One of ``"power_of_2"``, ``"multiples_of_32"``, or
+        ``"multiples_of_16"``. Defaults to ``"power_of_2"``.
     """
     if hw is None:
         hw = HardwareSpec()
 
     if candidate_sizes is None:
-        candidate_sizes = [32, 64, 128, 256, 512, 1024]
+        _CANDIDATE_MODES = {
+            "power_of_2": [32, 64, 128, 256, 512, 1024],
+            "multiples_of_32": [32, 64, 96, 128, 160, 192, 224, 256, 320, 384, 448, 512],
+            "multiples_of_16": [16, 32, 48, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 448, 512],
+        }
+        if candidate_mode not in _CANDIDATE_MODES:
+            raise ValueError(
+                f"Unknown candidate_mode '{candidate_mode}'. "
+                f"Choose from: {list(_CANDIDATE_MODES.keys())}"
+            )
+        candidate_sizes = _CANDIDATE_MODES[candidate_mode]
 
     ndim = spec.ndim
     halo = spec.halo_widths or (spec.order // 2,) * ndim
