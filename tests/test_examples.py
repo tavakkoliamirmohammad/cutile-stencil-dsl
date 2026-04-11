@@ -50,3 +50,9 @@ def test_laplacian_4th_order_example():
     """Smoke test for 4th-order Laplacian example."""
     from examples.laplacian_4th_order import main
     main()
+
+
+def test_variable_diffusion_example():
+    """Smoke test for variable-coefficient diffusion example."""
+    from examples.variable_diffusion import main
+    main()
