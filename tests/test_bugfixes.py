@@ -59,14 +59,14 @@ class TestTemporalBlockingCodegen:
         assert "ct.store" in code
 
     def test_temporal_codegen_no_expanded_tile(self):
-        """Shifted-view codegen does not use expanded (non-power-of-two) tiles."""
+        """Temporal codegen does not use expanded (non-power-of-two) tiles or loops."""
         gen = self._make_temporal_gen()
         code = gen.emit()
-        # Should NOT contain old temporal patterns
+        # Should NOT contain old temporal patterns (loops or expanded halo math)
         assert "ehx - _t_step" not in code
         assert "for _t_step in range(" not in code
-        # Should use shifted-view kernel, not temporal_kernel
-        assert "heat2d_kernel" in code
+        # Should use temporal_kernel with multi-step unrolling
+        assert "heat2d_temporal_kernel" in code
 
     def test_temporal_codegen_valid_shifted_views(self):
         """Temporal 2D codegen emits a valid shifted-view kernel with bid calls."""
