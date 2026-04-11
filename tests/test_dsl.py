@@ -246,3 +246,29 @@ class TestInference:
         spec = upwind._stencil_spec
         assert spec.ndim == 1
         assert spec.order == 2
+
+
+class TestModuleExports:
+    def test_all_is_defined(self):
+        import cutile_stencil
+        assert hasattr(cutile_stencil, "__all__"), "__all__ should be defined"
+
+    def test_all_names_are_importable(self):
+        import cutile_stencil
+        for name in cutile_stencil.__all__:
+            assert hasattr(cutile_stencil, name), f"{name} is in __all__ but not importable"
+
+    def test_all_matches_public_exports(self):
+        """__all__ should include all currently exported public names."""
+        import cutile_stencil
+        expected = {
+            "stencil",
+            "StencilSpec", "HardwareSpec", "TileConfig", "RooflineResult", "BrickLayout",
+            "register", "lookup", "all_stencils",
+            "BoundaryType", "BoundaryCondition", "BoundarySpec",
+            "analyze", "AnalysisResult", "compile", "CompileResult",
+            "GPU_PRESETS",
+            "generate_stencil_cg", "compile_stencil_cg",
+            "laplacian_stencil_spec",
+        }
+        assert set(cutile_stencil.__all__) == expected
