@@ -95,6 +95,10 @@ RTX_PRO_6000 = GPUPreset(
     peak_gflops_fp32=125000.0,    # 125 TFLOPS from datasheet
 )
 
+# Measured performance on RTX PRO 6000 Blackwell (benchmark_suite):
+# 1D heat 4M: 184 Gpts/s, 2D lap 2K: 120 Gpts/s, 3D lap 256: 40 Gpts/s
+# Effective bandwidth exceeds peak due to L2 cache effects on small stencils
+
 # Max-Q variant: lower sustained clocks due to 300W power limit (vs 600W full)
 RTX_PRO_6000_MAXQ = GPUPreset(
     name="RTX_PRO_6000_MAXQ",
