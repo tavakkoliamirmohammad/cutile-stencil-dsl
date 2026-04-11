@@ -44,3 +44,9 @@ def test_heat_2d_bricked():
 def test_benchmark_suite():
     from examples.benchmark_suite import main
     main()
+
+
+def test_laplacian_4th_order_example():
+    """Smoke test for 4th-order Laplacian example."""
+    from examples.laplacian_4th_order import main
+    main()
