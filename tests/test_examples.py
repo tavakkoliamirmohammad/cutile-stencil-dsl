@@ -44,3 +44,9 @@ def test_heat_2d_bricked():
 def test_benchmark_suite():
     from examples.benchmark_suite import main
     main()
+
+
+def test_variable_diffusion_example():
+    """Smoke test for variable-coefficient diffusion example."""
+    from examples.variable_diffusion import main
+    main()
