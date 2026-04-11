@@ -938,3 +938,162 @@ class TestMultiGPUExecution:
         assert decompose is not None
         assert MultiGPUStencilCodeGenerator is not None
         assert emit_multigpu_launcher is not None
+
+
+# =====================================================================
+# Cartesian Decomposition Tests
+# =====================================================================
+
+
+class TestCartesianDecomposition:
+    """Test the decompose_cartesian() function for 2D/3D partitioning."""
+
+    def test_2d_4_gpus(self):
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        decomp = decompose_cartesian(
+            domain=(256, 256), num_gpus=4, halo_widths=(1, 1)
+        )
+        assert decomp.topology == (2, 2)
+        assert len(decomp.partitions) == 4
+        assert decomp.partitions[0].local_domain == (128, 128)
+
+    def test_2d_4_gpus_neighbors(self):
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        decomp = decompose_cartesian(
+            domain=(256, 256), num_gpus=4, halo_widths=(1, 1)
+        )
+        # Partition (0,0): right neighbor on axis 0 is (1,0), below on axis 1 is (0,1)
+        p00 = decomp.partitions[0]  # coords (0, 0)
+        assert p00.neighbors[(0, +1)] is not None  # has right neighbor on axis 0
+        assert p00.neighbors[(1, +1)] is not None  # has bottom neighbor on axis 1
+        assert p00.neighbors[(0, -1)] is None      # no left (boundary)
+        assert p00.neighbors[(1, -1)] is None      # no top (boundary)
+
+    def test_3d_8_gpus(self):
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        decomp = decompose_cartesian(
+            domain=(64, 64, 64), num_gpus=8, halo_widths=(1, 1, 1)
+        )
+        assert decomp.topology == (2, 2, 2)
+        assert len(decomp.partitions) == 8
+        assert decomp.partitions[0].local_domain == (32, 32, 32)
+
+    def test_custom_topology(self):
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        decomp = decompose_cartesian(
+            domain=(256, 512), num_gpus=8, halo_widths=(1, 1),
+            topology=(2, 4)
+        )
+        assert decomp.topology == (2, 4)
+        assert decomp.partitions[0].local_domain == (128, 128)
+
+    def test_periodic_cartesian(self):
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        decomp = decompose_cartesian(
+            domain=(256, 256), num_gpus=4, halo_widths=(1, 1),
+            periodic=True
+        )
+        # Corner partition (0,0) should wrap
+        p00 = decomp.partitions[0]
+        assert p00.neighbors[(0, -1)] is not None  # wraps to right column
+        assert p00.neighbors[(1, -1)] is not None  # wraps to bottom row
+
+    def test_offsets_cover_domain(self):
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        decomp = decompose_cartesian(
+            domain=(256, 512), num_gpus=8, halo_widths=(1, 1),
+            topology=(2, 4)
+        )
+        # All offsets + local_domain should tile the global domain
+        for d in range(2):
+            covered = set()
+            for p in decomp.partitions:
+                start = p.local_offset[d]
+                end = start + p.local_domain[d]
+                for x in range(start, end):
+                    covered.add(x)
+            assert len(covered) == decomp.global_domain[d]
+
+    def test_invalid_topology_product(self):
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        with pytest.raises(ValueError, match="Product"):
+            decompose_cartesian(
+                domain=(256, 256), num_gpus=4, halo_widths=(1, 1),
+                topology=(2, 3)  # 2*3=6 != 4
+            )
+
+    def test_indivisible_raises(self):
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        # topology=(2,2), domain[0]=100 is divisible but domain[1]=101 is not
+        with pytest.raises(ValueError, match="not divisible"):
+            decompose_cartesian(
+                domain=(100, 101), num_gpus=4, halo_widths=(1, 1),
+                topology=(2, 2)
+            )
+
+    def test_factorize_6_gpus_2d(self):
+        from cutile_stencil.multigpu.decomposition import _factorize_gpus
+        topo = _factorize_gpus(6, 2)
+        assert topo[0] * topo[1] == 6
+        assert max(topo) - min(topo) <= 1  # (2, 3) is balanced
+
+    def test_rank_coords_bijection(self):
+        """Each rank maps to exactly one unique set of coords."""
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        decomp = decompose_cartesian(
+            domain=(256, 256), num_gpus=4, halo_widths=(1, 1)
+        )
+        coords_seen = [p.coords for p in decomp.partitions]
+        assert len(set(coords_seen)) == 4  # all unique
+
+    def test_partition_is_frozen(self):
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        decomp = decompose_cartesian(
+            domain=(256, 256), num_gpus=4, halo_widths=(1, 1)
+        )
+        with pytest.raises(AttributeError):
+            decomp.partitions[0].rank = 99
+
+    def test_decomposition_is_frozen(self):
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        decomp = decompose_cartesian(
+            domain=(256, 256), num_gpus=4, halo_widths=(1, 1)
+        )
+        with pytest.raises(AttributeError):
+            decomp.num_gpus = 99
+
+    def test_halo_dim_mismatch_raises(self):
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        with pytest.raises(ValueError, match="halo_widths has"):
+            decompose_cartesian(
+                domain=(256, 256), num_gpus=4, halo_widths=(1,)
+            )
+
+    def test_topology_dim_mismatch_raises(self):
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        with pytest.raises(ValueError, match="topology has"):
+            decompose_cartesian(
+                domain=(256, 256), num_gpus=4, halo_widths=(1, 1),
+                topology=(2, 2, 1)  # 3D topology for 2D domain
+            )
+
+    def test_global_domain_preserved(self):
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+        decomp = decompose_cartesian(
+            domain=(256, 512), num_gpus=8, halo_widths=(1, 2),
+            topology=(2, 4)
+        )
+        for p in decomp.partitions:
+            assert p.global_domain == (256, 512)
+            assert p.halo_widths == (1, 2)
+
+    def test_import_from_package(self):
+        """Verify the __init__.py exports for Cartesian types."""
+        from cutile_stencil.multigpu import (
+            CartesianPartition,
+            CartesianDecomposition,
+            decompose_cartesian,
+        )
+        assert CartesianPartition is not None
+        assert CartesianDecomposition is not None
+        assert decompose_cartesian is not None
