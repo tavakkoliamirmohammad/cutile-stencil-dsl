@@ -440,6 +440,116 @@ class TestMultiGPUIntegration:
 
 
 # =====================================================================
+# Halo Exchange Tests
+# =====================================================================
+
+
+class TestHaloExchange:
+    """Test halo exchange plan creation and code generation."""
+
+    def test_create_exchange_plan(self):
+        from cutile_stencil.multigpu.halo_exchange import create_exchange_plan
+
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=(1,))
+        plan = create_exchange_plan(decomp, rank=0, local_shape=(514,))
+        assert plan.left_neighbor is None
+        assert plan.right_neighbor == 1
+        assert plan.halo_width == 1
+
+    def test_periodic_exchange_plan(self):
+        from cutile_stencil.multigpu.halo_exchange import create_exchange_plan
+
+        decomp = decompose(domain=(1024,), num_gpus=4, halo_widths=(1,))
+        plan = create_exchange_plan(
+            decomp, rank=0, local_shape=(258,), periodic=True
+        )
+        assert plan.left_neighbor == 3  # wraps around
+        assert plan.right_neighbor == 1
+
+    def test_emit_exchange_valid_python(self):
+        from cutile_stencil.multigpu.halo_exchange import (
+            create_exchange_plan,
+            emit_halo_exchange_function,
+        )
+
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=(1,))
+        plan = create_exchange_plan(decomp, rank=0, local_shape=(514,))
+        code = emit_halo_exchange_function(plan)
+        ast.parse(code)
+
+    def test_exchange_has_pack_unpack(self):
+        from cutile_stencil.multigpu.halo_exchange import (
+            create_exchange_plan,
+            emit_halo_exchange_function,
+        )
+
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=(1,))
+        plan = create_exchange_plan(decomp, rank=0, local_shape=(514,))
+        code = emit_halo_exchange_function(plan)
+        assert "pack_halo_to_left" in code
+        assert "pack_halo_to_right" in code
+        assert "unpack_halo_from_left" in code
+        assert "unpack_halo_from_right" in code
+
+    def test_exchange_has_overlap_function(self):
+        from cutile_stencil.multigpu.halo_exchange import (
+            create_exchange_plan,
+            emit_halo_exchange_function,
+        )
+
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=(1,))
+        plan = create_exchange_plan(decomp, rank=0, local_shape=(514,))
+        code = emit_halo_exchange_function(plan)
+        assert "step_with_overlap" in code
+        assert "compute_stream" in code
+        assert "comm_stream" in code
+
+    def test_2d_exchange_has_contiguous(self):
+        from cutile_stencil.multigpu.halo_exchange import (
+            create_exchange_plan,
+            emit_halo_exchange_function,
+        )
+
+        decomp = decompose(
+            domain=(256, 1024), num_gpus=4, halo_widths=(1, 1)
+        )
+        plan = create_exchange_plan(
+            decomp, rank=1, local_shape=(258, 258)
+        )
+        code = emit_halo_exchange_function(plan)
+        assert "ascontiguousarray" in code
+
+
+# =====================================================================
+# Periodic Decomposition Tests
+# =====================================================================
+
+
+class TestPeriodicDecomposition:
+    """Test periodic boundary conditions in domain decomposition."""
+
+    def test_periodic_1d_neighbors(self):
+        decomp = decompose(
+            domain=(1024,), num_gpus=4, halo_widths=(1,), periodic=True
+        )
+        # First GPU: left neighbor wraps to last
+        assert decomp.partitions[0].neighbors["left"] == 3
+        assert decomp.partitions[0].neighbors["right"] == 1
+        # Last GPU: right neighbor wraps to first
+        assert decomp.partitions[3].neighbors["left"] == 2
+        assert decomp.partitions[3].neighbors["right"] == 0
+
+    def test_periodic_2_gpus(self):
+        decomp = decompose(
+            domain=(512,), num_gpus=2, halo_widths=(1,), periodic=True
+        )
+        assert decomp.partitions[0].neighbors["left"] == 1
+        assert decomp.partitions[0].neighbors["right"] == 1
+        assert decomp.partitions[1].neighbors["left"] == 0
+        assert decomp.partitions[1].neighbors["right"] == 0
+
+
+# =====================================================================
 # GPU Integration: actual multi-GPU stencil execution with P2P halo exchange
 # =====================================================================
 

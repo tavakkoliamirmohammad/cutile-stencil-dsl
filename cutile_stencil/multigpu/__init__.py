@@ -12,6 +12,11 @@ from cutile_stencil.multigpu.decomposition import (
 )
 from cutile_stencil.multigpu.codegen import MultiGPUStencilCodeGenerator
 from cutile_stencil.multigpu.launcher import emit_multigpu_launcher
+from cutile_stencil.multigpu.halo_exchange import (
+    HaloExchangePlan,
+    create_exchange_plan,
+    emit_halo_exchange_function,
+)
 
 __all__ = [
     "Partition",
@@ -19,4 +24,7 @@ __all__ = [
     "decompose",
     "MultiGPUStencilCodeGenerator",
     "emit_multigpu_launcher",
+    "HaloExchangePlan",
+    "create_exchange_plan",
+    "emit_halo_exchange_function",
 ]
