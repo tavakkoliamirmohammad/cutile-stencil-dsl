@@ -274,3 +274,25 @@ class TestTemporalBlockingDimensionIndependentHalos:
             assert "ct.load" in code
             assert "ct.bid(0)" in code
             assert "ct.bid(1)" in code
+
+
+class TestRooflineFlopScope:
+    """FLOP counter must only count operations in the function body, not decorators."""
+
+    def test_decorator_arithmetic_not_counted(self):
+        """Arithmetic in @stencil(order=2*3) must not inflate FLOP count."""
+        @stencil(ndim=1, order=2 * 3)
+        def simple_avg(u, i):
+            return u[i - 1] + u[i + 1]
+
+        spec = simple_avg._stencil_spec
+        extract_footprint(spec)
+        spec.halo_widths = compute_halo(spec.accesses, 1)
+
+        result = roofline_analysis(spec, hw)
+        # Body has 3 FLOPs: u[i-1] (1 Sub) + u[i+1] (1 Sub) = 2 Subs + 1 Add
+        # If decorator arithmetic leaked, we'd see 4 (extra Mul from 2*3)
+        assert result.flops_per_point == 3, (
+            f"Expected 3 FLOPs (2 Subs + 1 Add in body), got {result.flops_per_point}. "
+            f"Decorator arithmetic may be leaking into FLOP count."
+        )
