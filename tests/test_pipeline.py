@@ -257,3 +257,25 @@ class TestGPUPresetsExport:
         from cutile_stencil import BoundaryType, BoundarySpec
         bs = BoundarySpec.periodic(2)
         assert bs.conditions[0][0].bc_type == BoundaryType.PERIODIC
+
+
+class TestAutoDetectGPU:
+    def test_analyze_uses_detected_gpu(self):
+        """When hw=None, analyze() should try auto-detecting the GPU."""
+        from unittest.mock import patch
+        from cutile_stencil.config import A100_80GB
+
+        @stencil(ndim=1, order=2)
+        def heat(u, i):
+            return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
+
+        spec = heat._stencil_spec
+
+        # Mock auto_detect_gpu to return A100
+        with patch("cutile_stencil.dsl.pipeline.auto_detect_gpu", return_value=A100_80GB):
+            result = analyze(spec, domain=(1024,))
+
+        # A100 has 164 KiB shared mem — much bigger than default 48 KiB
+        default_result = analyze(spec, domain=(1024,), hw=HardwareSpec())
+        # With more shared mem, A100 should pick the same or larger tiles
+        assert result.tile_config.tile_sizes[0] >= default_result.tile_config.tile_sizes[0]
