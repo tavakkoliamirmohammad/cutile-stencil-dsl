@@ -106,3 +106,39 @@ def test_roofline_2d():
     assert roof.flops_per_point > 0
     # 2D Laplacian has 5 loads + 1 store
     assert roof.bytes_per_point > 0
+
+
+def test_candidate_mode_multiples_of_32():
+    spec = _make_heat_spec()
+    hw = HardwareSpec(shared_mem_bytes=49152, dtype_bytes=8)
+    cfg = compute_tile_config(spec, (1024,), hw, candidate_mode="multiples_of_32")
+    assert isinstance(cfg, TileConfig)
+    assert cfg.tile_sizes[0] >= 32
+
+
+def test_candidate_mode_multiples_of_16():
+    spec = _make_heat_spec()
+    hw = HardwareSpec(shared_mem_bytes=49152, dtype_bytes=8)
+    cfg = compute_tile_config(spec, (1024,), hw, candidate_mode="multiples_of_16")
+    assert isinstance(cfg, TileConfig)
+    assert cfg.tile_sizes[0] >= 16
+
+
+def test_candidate_mode_invalid():
+    spec = _make_heat_spec()
+    hw = HardwareSpec(shared_mem_bytes=49152, dtype_bytes=8)
+    with pytest.raises(ValueError, match="Unknown candidate_mode"):
+        compute_tile_config(spec, (1024,), hw, candidate_mode="invalid")
+
+
+def test_non_pow2_selected_under_tight_memory():
+    """With tight shared memory, non-pow2 tiles may fit better than pow2."""
+    spec = _make_lap2d_spec()
+    # Very tight shared memory that can't fit 128x128 but can fit 96x96
+    # 96+2=98, so (98*98 + 96*96) * 8 * 3 = (9604 + 9216) * 24 = 451680 bytes
+    # 128+2=130, (130*130 + 128*128) * 8 * 3 = (16900 + 16384) * 24 = 798816 bytes
+    hw_tight = HardwareSpec(shared_mem_bytes=500000, dtype_bytes=8)
+    cfg_pow2 = compute_tile_config(spec, (512, 512), hw_tight, candidate_mode="power_of_2")
+    cfg_m32 = compute_tile_config(spec, (512, 512), hw_tight, candidate_mode="multiples_of_32")
+    # multiples_of_32 should find 96 which has lower overhead than 64
+    assert cfg_m32.overhead_fraction <= cfg_pow2.overhead_fraction

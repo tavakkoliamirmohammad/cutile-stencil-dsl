@@ -172,6 +172,7 @@ def auto_detect_gpu() -> Optional[GPUPreset]:
 class TilingConfig:
     """Configuration for tile size enumeration."""
     candidate_sizes: List[int] = field(default_factory=lambda: [32, 64, 128, 256, 512, 1024])
+    candidate_mode: str = "power_of_2"
     max_temporal_steps: int = 16
 
 
