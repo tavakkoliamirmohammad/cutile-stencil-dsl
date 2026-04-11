@@ -14,7 +14,7 @@ from cutile_stencil.codegen.emitter import CodeEmitter
 from cutile_stencil.config import SolverConfig, DEFAULT_SOLVER
 from cutile_stencil.dsl.types import StencilSpec, HardwareSpec
 from cutile_stencil.solvers.blas_kernels import emit_dot_kernel, emit_axpy_kernel
-from cutile_stencil.solvers.solver_base import emit_cg_loop, emit_preconditioned_cg_loop
+from cutile_stencil.solvers.solver_base import emit_cg_loop, emit_preconditioned_cg_loop, emit_cg_loop_with_history
 from cutile_stencil.solvers.preconditioner import generate_jacobi_preconditioner
 
 
@@ -24,6 +24,7 @@ def generate_stencil_cg(
     solver_config: SolverConfig | None = None,
     hw: HardwareSpec | None = None,
     preconditioned: bool = False,
+    return_history: bool = False,
 ) -> str:
     """Generate a complete matrix-free CG solver with a stencil operator.
 
@@ -47,6 +48,9 @@ def generate_stencil_cg(
     preconditioned : bool, optional
         If True, embed a Jacobi preconditioner and use preconditioned CG
         (z = M^{-1} r, beta uses dot(r, z)).  Default is False.
+    return_history : bool
+        When True, the generated solver returns a ``ConvergenceHistory``
+        object instead of a plain ``(x, iters, residual)`` tuple.
 
     Returns
     -------
@@ -70,6 +74,9 @@ def generate_stencil_cg(
     e.line("import cuda.tile as ct")
     e.line("import cupy as cp")
     e.line("import math")
+    if return_history:
+        e.line("import time")
+        e.line("from cutile_stencil.solvers.convergence import ConvergenceHistory")
     e.blank()
     e.line("ConstInt = ct.Constant[int]")
     e.blank()
@@ -162,7 +169,11 @@ def generate_stencil_cg(
             e.line("ct.launch(stream, grid, dot_kernel, (r, r, buf, tile_size))")
             e.line("r_dot_r = buf.item()")
             e.blank()
-            emit_cg_loop(e, operator_call, cfg, spec.dtype)
+
+            if return_history:
+                emit_cg_loop_with_history(e, operator_call, cfg, spec.dtype)
+            else:
+                emit_cg_loop(e, operator_call, cfg, spec.dtype)
 
     return e.render()
 
@@ -173,13 +184,14 @@ def compile_stencil_cg(
     solver_config: SolverConfig | None = None,
     hw: HardwareSpec | None = None,
     preconditioned: bool = False,
+    return_history: bool = False,
 ) -> "StencilCGCompileResult":
     """Compile a matrix-free stencil CG solver, returning a validatable result."""
     import ast
     from cutile_stencil.solvers.solver_compile import StencilCGCompileResult
 
     cfg = solver_config or DEFAULT_SOLVER
-    code = generate_stencil_cg(spec, domain, cfg, hw, preconditioned=preconditioned)
+    code = generate_stencil_cg(spec, domain, cfg, hw, preconditioned=preconditioned, return_history=return_history)
     ast.parse(code)
 
     return StencilCGCompileResult(

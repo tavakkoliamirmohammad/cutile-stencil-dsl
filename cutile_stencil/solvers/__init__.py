@@ -1,3 +1,4 @@
+from cutile_stencil.solvers.convergence import ConvergenceHistory
 from cutile_stencil.solvers.formats import DIAMatrix, BSRMatrix, laplacian_1d_dia, laplacian_2d_dia, laplacian_3d_dia
 from cutile_stencil.solvers.kernels import generate_dia_spmv, generate_axpy, generate_dot, generate_norm2
 from cutile_stencil.solvers.stencil_bridge import dia_to_stencil_spec, laplacian_stencil_spec
