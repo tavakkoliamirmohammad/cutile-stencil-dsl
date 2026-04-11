@@ -8,3 +8,14 @@ from cutile_stencil.dsl.pipeline import analyze, AnalysisResult, compile, Compil
 from cutile_stencil.config import GPU_PRESETS
 from cutile_stencil.solvers.stencil_cg import generate_stencil_cg, compile_stencil_cg
 from cutile_stencil.solvers.stencil_bridge import laplacian_stencil_spec
+
+__all__ = [
+    "stencil",
+    "StencilSpec", "HardwareSpec", "TileConfig", "RooflineResult", "BrickLayout",
+    "register", "lookup", "all_stencils",
+    "BoundaryType", "BoundaryCondition", "BoundarySpec",
+    "analyze", "AnalysisResult", "compile", "CompileResult",
+    "GPU_PRESETS",
+    "generate_stencil_cg", "compile_stencil_cg",
+    "laplacian_stencil_spec",
+]
