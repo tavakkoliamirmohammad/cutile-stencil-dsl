@@ -437,6 +437,128 @@ class TestMultiGPUIntegration:
         # All five names should be importable
         assert Partition is not None
         assert DomainDecomposition is not None
+
+
+# =====================================================================
+# GPU Integration: actual multi-GPU stencil execution with P2P halo exchange
+# =====================================================================
+
+try:
+    import cupy as cp
+    cp.cuda.Device(0).compute_capability
+    _HAS_GPU = True
+    _NUM_GPUS = cp.cuda.runtime.getDeviceCount()
+except Exception:
+    _HAS_GPU = False
+    _NUM_GPUS = 0
+
+gpu_required = pytest.mark.skipif(not _HAS_GPU, reason="No GPU available")
+multi_gpu_required = pytest.mark.skipif(_NUM_GPUS < 2, reason="Need >= 2 GPUs")
+
+
+def _enable_p2p(n_gpus):
+    """Enable P2P access between GPU pairs."""
+    for i in range(n_gpus):
+        cp.cuda.Device(i).use()
+        for j in range(n_gpus):
+            if i != j:
+                try:
+                    cp.cuda.runtime.deviceEnablePeerAccess(j)
+                except cp.cuda.runtime.CUDARuntimeError:
+                    pass
+
+
+def _run_multigpu_1d_stencil(n_gpus, n_steps=10):
+    """Run 1D heat stencil across n_gpus with P2P halo exchange, return True if matches CPU."""
+    import numpy as np
+    from cutile_stencil import compile as stencil_compile
+    from cutile_stencil.reference.stencil_ref import apply_stencil
+    import importlib.util
+    import tempfile
+
+    @stencil(ndim=1, order=2)
+    def heat_mgpu(u, i):
+        return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
+
+    halo = 1
+    local_n = 256
+    global_n = local_n * n_gpus
+
+    result = stencil_compile(heat_mgpu, domain=(local_n,))
+    tmp = tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w")
+    tmp.write(result.code)
+    tmp.close()
+    mod_spec = importlib.util.spec_from_file_location("_k", tmp.name)
+    mod = importlib.util.module_from_spec(mod_spec)
+    mod_spec.loader.exec_module(mod)
+    launch = getattr(mod, f"launch_{heat_mgpu._stencil_spec.name}")
+
+    np.random.seed(42)
+    u_global = np.random.randn(global_n + 2 * halo).astype(np.float64)
+
+    _enable_p2p(n_gpus)
+
+    u_gpu = []
+    out_gpu = []
+    for rank in range(n_gpus):
+        cp.cuda.Device(rank).use()
+        start = rank * local_n
+        u_gpu.append(cp.asarray(u_global[start : start + local_n + 2 * halo]))
+        out_gpu.append(cp.zeros(local_n + 2 * halo, dtype=cp.float64))
+
+    for step in range(n_steps):
+        for rank in range(n_gpus):
+            cp.cuda.Device(rank).use()
+            launch(u_gpu[rank], out_gpu[rank])
+        for rank in range(n_gpus):
+            cp.cuda.Device(rank).synchronize()
+
+        for rank in range(n_gpus):
+            cp.cuda.Device(rank).use()
+            u_gpu[rank][halo:-halo] = out_gpu[rank][halo:-halo]
+
+        # P2P halo exchange
+        for rank in range(n_gpus):
+            cp.cuda.Device(rank).use()
+            if rank < n_gpus - 1:
+                u_gpu[rank][-halo:].data.copy_from_device(
+                    u_gpu[rank + 1][halo : 2 * halo].data, halo * 8
+                )
+            if rank > 0:
+                u_gpu[rank][:halo].data.copy_from_device(
+                    u_gpu[rank - 1][-2 * halo : -halo].data, halo * 8
+                )
+
+    u_cpu = u_global.copy()
+    for step in range(n_steps):
+        u_cpu = apply_stencil(u_cpu, heat_mgpu._stencil_spec)
+
+    all_match = True
+    for rank in range(n_gpus):
+        cp.cuda.Device(rank).use()
+        gpu_int = cp.asnumpy(u_gpu[rank])[halo:-halo]
+        cpu_int = u_cpu[halo + rank * local_n : halo + (rank + 1) * local_n]
+        if not np.allclose(gpu_int, cpu_int, atol=1e-10):
+            all_match = False
+    return all_match
+
+
+@multi_gpu_required
+class TestMultiGPUExecution:
+    """GPU integration tests: real stencil execution across multiple GPUs."""
+
+    def test_1d_2_gpus(self):
+        assert _run_multigpu_1d_stencil(2, n_steps=10)
+
+    def test_1d_3_gpus(self):
+        if _NUM_GPUS < 3:
+            pytest.skip("Need >= 3 GPUs")
+        assert _run_multigpu_1d_stencil(3, n_steps=10)
+
+    def test_1d_4_gpus(self):
+        if _NUM_GPUS < 4:
+            pytest.skip("Need >= 4 GPUs")
+        assert _run_multigpu_1d_stencil(4, n_steps=10)
         assert decompose is not None
         assert MultiGPUStencilCodeGenerator is not None
         assert emit_multigpu_launcher is not None
