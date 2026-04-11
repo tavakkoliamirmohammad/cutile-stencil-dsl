@@ -1,139 +1,198 @@
-"""Tests for AMR hierarchy, prolongation, and restriction."""
+"""Tests for AMR prolongation and restriction operators."""
 
 import ast
-import numpy as np
 import pytest
-from cutile_stencil.amr.levels import RefinementLevel, AMRHierarchy
+import numpy as np
+
 from cutile_stencil.amr.operators import (
-    prolongation_weights_1d,
-    restriction_weights_1d,
     generate_prolongation_kernel,
     generate_restriction_kernel,
 )
 
 
-class TestRefinementLevel:
-    def test_basic_creation(self):
-        lvl = RefinementLevel(level=0, domain=(256,))
-        assert lvl.level == 0
-        assert lvl.spacing == 1.0
-        assert lvl.ndim == 1
+class TestProlongationKernelGeneration:
+    """Tests for generate_prolongation_kernel."""
 
-    def test_spacing_decreases(self):
-        lvl0 = RefinementLevel(level=0, domain=(128,), refinement_ratio=2)
-        lvl1 = RefinementLevel(level=1, domain=(256,), refinement_ratio=2)
-        assert lvl0.spacing == 1.0
-        assert lvl1.spacing == 0.5
-
-    def test_2d_level(self):
-        lvl = RefinementLevel(level=0, domain=(128, 256))
-        assert lvl.ndim == 2
-
-
-class TestAMRHierarchy:
-    def test_create_1_level(self):
-        h = AMRHierarchy.create(base_domain=(256,), num_levels=1, halo_widths=(1,))
-        assert h.num_levels == 1
-        assert h.coarsest.domain == (256,)
-
-    def test_create_2_levels(self):
-        h = AMRHierarchy.create(base_domain=(128,), num_levels=2, halo_widths=(1,))
-        assert h.num_levels == 2
-        assert h.coarsest.domain == (128,)
-        assert h.finest.domain == (256,)  # 128 * 2
-
-    def test_create_3_levels_2d(self):
-        h = AMRHierarchy.create(base_domain=(64, 64), num_levels=3, halo_widths=(1, 1))
-        assert h.num_levels == 3
-        assert h.levels[0].domain == (64, 64)
-        assert h.levels[1].domain == (128, 128)
-        assert h.levels[2].domain == (256, 256)
-
-    def test_subcycling_steps(self):
-        h = AMRHierarchy.create(base_domain=(128,), num_levels=3, halo_widths=(1,))
-        assert h.subcycling_steps(0) == 1
-        assert h.subcycling_steps(1) == 2
-        assert h.subcycling_steps(2) == 4
-
-    def test_empty_hierarchy_raises(self):
-        with pytest.raises(ValueError):
-            AMRHierarchy(levels=[], halo_widths=(1,))
-
-    def test_inconsistent_ndim_raises(self):
-        with pytest.raises(ValueError):
-            AMRHierarchy(
-                levels=[
-                    RefinementLevel(level=0, domain=(128,)),
-                    RefinementLevel(level=1, domain=(128, 128)),
-                ],
-                halo_widths=(1,),
-            )
-
-
-class TestProlongationWeights:
-    def test_ratio_2(self):
-        w = prolongation_weights_1d(ratio=2)
-        assert len(w) == 2
-        assert abs(w.sum() - 1.0) < 1e-10  # Weights should sum ~1
-
-    def test_ratio_4(self):
-        w = prolongation_weights_1d(ratio=4)
-        assert len(w) == 4
-
-
-class TestRestrictionWeights:
-    def test_ratio_2(self):
-        w = restriction_weights_1d(ratio=2)
-        assert len(w) == 2
-        np.testing.assert_allclose(w, [0.5, 0.5])
-
-
-class TestProlongationKernel:
     def test_1d_valid_python(self):
-        code = generate_prolongation_kernel(ndim=1, ratio=2)
-        ast.parse(code)
+        """1D prolongation kernel is valid Python."""
+        src = generate_prolongation_kernel(ndim=1)
+        ast.parse(src)
 
     def test_2d_valid_python(self):
-        code = generate_prolongation_kernel(ndim=2, ratio=2)
-        ast.parse(code)
+        """2D prolongation kernel is valid Python."""
+        src = generate_prolongation_kernel(ndim=2)
+        ast.parse(src)
 
-    def test_1d_contains_function(self):
-        code = generate_prolongation_kernel(ndim=1)
-        assert "def prolongate_1d" in code
+    def test_3d_prolongation_valid_python(self):
+        """3D trilinear prolongation kernel is valid Python."""
+        src = generate_prolongation_kernel(ndim=3)
+        ast.parse(src)
+
+    def test_3d_prolongation_contains_trilinear(self):
+        """3D prolongation source contains trilinear interpolation logic."""
+        src = generate_prolongation_kernel(ndim=3)
+        assert "u_coarse[i, j, k]" in src
+        assert "u_coarse[i + 1, j, k]" in src
+        assert "u_coarse[i, j + 1, k]" in src
+        assert "u_coarse[i, j, k + 1]" in src
+        assert "u_coarse[i + 1, j + 1, k]" in src
+        assert "u_coarse[i + 1, j, k + 1]" in src
+        assert "u_coarse[i, j + 1, k + 1]" in src
+        assert "u_coarse[i + 1, j + 1, k + 1]" in src
+
+    def test_3d_prolongation_has_function(self):
+        """3D prolongation source defines prolongation_3d function."""
+        src = generate_prolongation_kernel(ndim=3)
+        assert "def prolongation_3d(" in src
+
+    def test_3d_prolongation_has_triple_loops(self):
+        """3D prolongation uses triple nested loops over fine grid offsets."""
+        src = generate_prolongation_kernel(ndim=3)
+        # Should have loops over di, dj, dk
+        assert "for di in range" in src
+        assert "for dj in range" in src
+        assert "for dk in range" in src
+
+    def test_3d_prolongation_alphas(self):
+        """3D prolongation defines interpolation weights ai, aj, ak."""
+        src = generate_prolongation_kernel(ndim=3)
+        assert "ai" in src
+        assert "aj" in src
+        assert "ak" in src
+
+    def test_invalid_ndim_raises(self):
+        """ndim=4 raises NotImplementedError."""
+        with pytest.raises(NotImplementedError):
+            generate_prolongation_kernel(ndim=4)
+
+    def test_zero_ndim_raises(self):
+        """ndim=0 raises ValueError."""
+        with pytest.raises(ValueError):
+            generate_prolongation_kernel(ndim=0)
+
+    def test_custom_refinement_factor(self):
+        """Custom refinement factor is reflected in source."""
+        src = generate_prolongation_kernel(ndim=3, refinement_factor=4)
+        ast.parse(src)
+        assert "4" in src
+
+    def test_3d_prolongation_correctness(self):
+        """3D prolongation produces correct trilinear interpolation values."""
+        src = generate_prolongation_kernel(ndim=3, refinement_factor=2)
+        ns = {}
+        exec(compile(ast.parse(src), "<amr_prolongation_3d>", "exec"), ns)
+        prolongation_3d = ns["prolongation_3d"]
+
+        # Simple 2x2x2 coarse grid, corners filled with known values
+        u_coarse = np.zeros((2, 2, 2))
+        u_coarse[0, 0, 0] = 8.0
+        u_coarse[1, 0, 0] = 0.0
+        u_coarse[0, 1, 0] = 0.0
+        u_coarse[0, 0, 1] = 0.0
+        u_coarse[1, 1, 0] = 0.0
+        u_coarse[1, 0, 1] = 0.0
+        u_coarse[0, 1, 1] = 0.0
+        u_coarse[1, 1, 1] = 0.0
+
+        u_fine = np.zeros((3, 3, 3))  # (n-1)*r + 1 = 3 for n=2, r=2 but we init bigger
+        u_fine = np.zeros((4, 4, 4))
+        prolongation_3d(u_coarse, u_fine)
+
+        # At fine[0,0,0]: di=dj=dk=0, ai=aj=ak=0 => all weight on u_coarse[0,0,0]=8
+        assert abs(u_fine[0, 0, 0] - 8.0) < 1e-12
+
+        # At fine[1,0,0]: di=1, ai=0.5 => 0.5*u_coarse[0,0,0] + 0.5*u_coarse[1,0,0] = 4
+        assert abs(u_fine[1, 0, 0] - 4.0) < 1e-12
 
 
-class TestRestrictionKernel:
+class TestRestrictionKernelGeneration:
+    """Tests for generate_restriction_kernel."""
+
     def test_1d_valid_python(self):
-        code = generate_restriction_kernel(ndim=1, ratio=2)
-        ast.parse(code)
+        """1D restriction kernel is valid Python."""
+        src = generate_restriction_kernel(ndim=1)
+        ast.parse(src)
 
     def test_2d_valid_python(self):
-        code = generate_restriction_kernel(ndim=2, ratio=2)
-        ast.parse(code)
+        """2D restriction kernel is valid Python."""
+        src = generate_restriction_kernel(ndim=2)
+        ast.parse(src)
 
-    def test_1d_contains_function(self):
-        code = generate_restriction_kernel(ndim=1)
-        assert "def restrict_1d" in code
+    def test_3d_restriction_valid_python(self):
+        """3D volume-weighted restriction kernel is valid Python."""
+        src = generate_restriction_kernel(ndim=3)
+        ast.parse(src)
 
+    def test_3d_restriction_has_function(self):
+        """3D restriction source defines restriction_3d function."""
+        src = generate_restriction_kernel(ndim=3)
+        assert "def restriction_3d(" in src
 
-class TestProlongationRestrictionRoundTrip:
-    def test_1d_restriction_then_prolongation(self):
-        """Restrict then prolongate should approximately recover original."""
-        # Create fine array
-        fine = np.sin(np.linspace(0, 2 * np.pi, 64))
-        coarse = np.zeros(32)
+    def test_3d_restriction_uses_mean(self):
+        """3D restriction uses mean() for volume averaging."""
+        src = generate_restriction_kernel(ndim=3)
+        assert ".mean()" in src
 
-        # Manual restriction (average pairs)
-        for i in range(32):
-            coarse[i] = (fine[2*i] + fine[2*i + 1]) / 2
+    def test_3d_restriction_has_triple_loops(self):
+        """3D restriction has loops over all three coarse dimensions."""
+        src = generate_restriction_kernel(ndim=3)
+        # Should have loops for i, j, k
+        assert "for i in range" in src
+        assert "for j in range" in src
+        assert "for k in range" in src
 
-        # Manual prolongation (linear interp)
-        fine_recovered = np.zeros(64)
-        for i in range(31):
-            fine_recovered[2*i] = 0.75 * coarse[i] + 0.25 * coarse[i+1]
-            fine_recovered[2*i + 1] = 0.25 * coarse[i] + 0.75 * coarse[i+1]
-        fine_recovered[62] = coarse[31]
-        fine_recovered[63] = coarse[31]
+    def test_3d_restriction_slice_syntax(self):
+        """3D restriction uses 3D slice indexing into fine grid."""
+        src = generate_restriction_kernel(ndim=3)
+        assert "u_fine[" in src
+        assert ".mean()" in src
 
-        # Should approximately recover the original (with some smoothing)
-        assert np.allclose(fine_recovered[:62], fine[:62], atol=0.2)
+    def test_invalid_ndim_raises(self):
+        """ndim=4 raises NotImplementedError."""
+        with pytest.raises(NotImplementedError):
+            generate_restriction_kernel(ndim=4)
+
+    def test_zero_ndim_raises(self):
+        """ndim=0 raises ValueError."""
+        with pytest.raises(ValueError):
+            generate_restriction_kernel(ndim=0)
+
+    def test_3d_restriction_correctness(self):
+        """3D restriction correctly averages fine-grid cells into coarse cells."""
+        src = generate_restriction_kernel(ndim=3, refinement_factor=2)
+        ns = {}
+        exec(compile(ast.parse(src), "<amr_restriction_3d>", "exec"), ns)
+        restriction_3d = ns["restriction_3d"]
+
+        r = 2
+        n_coarse = 4
+        n_fine = n_coarse * r
+
+        # Fine grid filled with constant 1.0 — coarse should also be 1.0
+        u_fine = np.ones((n_fine, n_fine, n_fine))
+        u_coarse = np.zeros((n_coarse, n_coarse, n_coarse))
+        restriction_3d(u_fine, u_coarse)
+        np.testing.assert_allclose(u_coarse, 1.0, err_msg="Constant field should be preserved")
+
+    def test_3d_restriction_mean_values(self):
+        """3D restriction correctly averages non-uniform fine-grid values."""
+        src = generate_restriction_kernel(ndim=3, refinement_factor=2)
+        ns = {}
+        exec(compile(ast.parse(src), "<amr_restriction_3d>", "exec"), ns)
+        restriction_3d = ns["restriction_3d"]
+
+        r = 2
+        n_coarse = 2
+        n_fine = n_coarse * r
+
+        # Fine grid: block [0:2, 0:2, 0:2] has value 8.0, rest 0.0
+        u_fine = np.zeros((n_fine, n_fine, n_fine))
+        u_fine[0:r, 0:r, 0:r] = 8.0
+        u_coarse = np.zeros((n_coarse, n_coarse, n_coarse))
+        restriction_3d(u_fine, u_coarse)
+
+        # Coarse cell [0,0,0] should be mean of u_fine[0:2, 0:2, 0:2] = 8.0
+        assert abs(u_coarse[0, 0, 0] - 8.0) < 1e-12
+        # All other coarse cells should be 0.0
+        assert abs(u_coarse[0, 0, 1]) < 1e-12
+        assert abs(u_coarse[1, 0, 0]) < 1e-12

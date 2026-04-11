@@ -1,132 +1,269 @@
-"""Inter-level transfer operators: prolongation (coarse->fine) and restriction (fine->coarse)."""
+"""AMR prolongation and restriction operators.
+
+Provides code generators for 1D, 2D, and 3D adaptive mesh refinement
+interpolation (prolongation) and coarsening (restriction) kernels.
+"""
 
 from __future__ import annotations
-
-import numpy as np
-from typing import Tuple
 
 from cutile_stencil.codegen.emitter import CodeEmitter
 
 
-def prolongation_weights_1d(ratio: int = 2) -> np.ndarray:
-    """Linear interpolation weights for 1D prolongation.
+def generate_prolongation_kernel(ndim: int, refinement_factor: int = 2) -> str:
+    """Generate a Python prolongation kernel for the given number of dimensions.
 
-    For ratio=2: each coarse cell maps to 2 fine cells.
-    Fine cell at left: weight 0.75 from coarse, 0.25 from neighbor
-    Fine cell at right: weight 0.25 from coarse, 0.75 from neighbor
+    Prolongation interpolates from a coarse grid to a fine grid.
 
-    Returns array of shape (ratio,) with weights for the parent cell.
+    Parameters
+    ----------
+    ndim : int
+        Number of spatial dimensions (1, 2, or 3).
+    refinement_factor : int
+        Refinement ratio between fine and coarse grids (default: 2).
+
+    Returns
+    -------
+    str
+        Python source code implementing the prolongation kernel.
+
+    Raises
+    ------
+    NotImplementedError
+        If ndim is not 1, 2, or 3.
+    ValueError
+        If ndim < 1 or refinement_factor < 1.
     """
-    weights = np.zeros(ratio)
-    for i in range(ratio):
-        # Linear interpolation: center weight decreases as we move away
-        weights[i] = 1.0 - (i + 0.5) / ratio
-    return weights
+    if ndim < 1:
+        raise ValueError(f"ndim must be >= 1, got {ndim}")
+    if refinement_factor < 1:
+        raise ValueError(f"refinement_factor must be >= 1, got {refinement_factor}")
 
-
-def restriction_weights_1d(ratio: int = 2) -> np.ndarray:
-    """Volume-weighted averaging for 1D restriction.
-
-    For ratio=2: each fine pair averages to one coarse cell.
-    Simple averaging: weight = 1/ratio for each fine cell.
-    """
-    return np.ones(ratio) / ratio
-
-
-def generate_prolongation_kernel(
-    ndim: int,
-    ratio: int = 2,
-    dtype: str = "float64",
-    tile_size: int = 256,
-) -> str:
-    """Generate a cuTile kernel for coarse-to-fine prolongation.
-
-    Uses bilinear (2D) or trilinear (3D) interpolation.
-    For 1D: linear interpolation.
-    """
     e = CodeEmitter()
-    e.line('"""Prolongation kernel: coarse -> fine (auto-generated)."""')
-    e.blank()
-    e.line("import cuda.tile as ct")
-    e.line("import cupy as cp")
-    e.blank()
-    e.line("ConstInt = ct.Constant[int]")
-    e.blank()
+    r = refinement_factor
 
-    # For simplicity, generate a CuPy-based prolongation (not a ct.kernel)
-    # since prolongation is a simple array operation
-    e.line(f"def prolongate_{ndim}d(u_coarse, u_fine):")
+    if ndim == 1:
+        _emit_prolongation_1d(e, r)
+    elif ndim == 2:
+        _emit_prolongation_2d(e, r)
+    elif ndim == 3:
+        _emit_prolongation_3d(e, r)
+    else:
+        raise NotImplementedError(
+            f"Prolongation not implemented for ndim={ndim}. Supported: 1, 2, 3."
+        )
+
+    return e.render()
+
+
+def generate_restriction_kernel(ndim: int, refinement_factor: int = 2) -> str:
+    """Generate a Python restriction kernel for the given number of dimensions.
+
+    Restriction coarsens from a fine grid to a coarse grid using volume-weighted
+    averaging.
+
+    Parameters
+    ----------
+    ndim : int
+        Number of spatial dimensions (1, 2, or 3).
+    refinement_factor : int
+        Refinement ratio between fine and coarse grids (default: 2).
+
+    Returns
+    -------
+    str
+        Python source code implementing the restriction kernel.
+
+    Raises
+    ------
+    NotImplementedError
+        If ndim is not 1, 2, or 3.
+    ValueError
+        If ndim < 1 or refinement_factor < 1.
+    """
+    if ndim < 1:
+        raise ValueError(f"ndim must be >= 1, got {ndim}")
+    if refinement_factor < 1:
+        raise ValueError(f"refinement_factor must be >= 1, got {refinement_factor}")
+
+    e = CodeEmitter()
+    r = refinement_factor
+
+    if ndim == 1:
+        _emit_restriction_1d(e, r)
+    elif ndim == 2:
+        _emit_restriction_2d(e, r)
+    elif ndim == 3:
+        _emit_restriction_3d(e, r)
+    else:
+        raise NotImplementedError(
+            f"Restriction not implemented for ndim={ndim}. Supported: 1, 2, 3."
+        )
+
+    return e.render()
+
+
+# ---------------------------------------------------------------------------
+# 1D kernels
+# ---------------------------------------------------------------------------
+
+def _emit_prolongation_1d(e: CodeEmitter, r: int) -> None:
+    """1D linear interpolation from coarse to fine."""
+    e.line('"""1D prolongation: linear interpolation from coarse to fine grid."""')
+    e.blank()
+    e.line("import numpy as np")
+    e.blank()
+    e.blank()
+    e.line("def prolongation_1d(u_coarse, u_fine):")
     with e.indent():
-        e.line(f'"""Prolongate coarse array to fine array (ratio={ratio})."""')
-        if ndim == 1:
-            e.line(f"ratio = {ratio}")
-            e.line("N_coarse = u_coarse.shape[0]")
-            e.line("for i in range(N_coarse - 1):")
+        e.line(f'"""Linear prolongation with refinement factor {r}."""')
+        e.line("n_coarse = u_coarse.shape[0]")
+        e.line("for i in range(n_coarse - 1):")
+        with e.indent():
+            e.line(f"for di in range({r}):")
             with e.indent():
-                e.line("for r in range(ratio):")
-                with e.indent():
-                    e.line("alpha = (r + 0.5) / ratio")
-                    e.line("u_fine[i * ratio + r] = (1 - alpha) * u_coarse[i] + alpha * u_coarse[i + 1]")
-            # Last cell: copy
-            e.line("u_fine[(N_coarse - 1) * ratio:] = u_coarse[-1]")
-        elif ndim == 2:
-            e.line(f"ratio = {ratio}")
-            e.line("Nx, Ny = u_coarse.shape")
-            e.line("for i in range(Nx - 1):")
+                e.line(f"fi = i * {r} + di")
+                e.line(f"ai = di / {r}")
+                e.line("u_fine[fi] = (1 - ai) * u_coarse[i] + ai * u_coarse[i + 1]")
+        e.line(f"# Fill last point")
+        e.line(f"u_fine[(n_coarse - 1) * {r}] = u_coarse[n_coarse - 1]")
+
+
+def _emit_restriction_1d(e: CodeEmitter, r: int) -> None:
+    """1D volume-weighted restriction from fine to coarse."""
+    e.line('"""1D restriction: volume-weighted averaging from fine to coarse grid."""')
+    e.blank()
+    e.line("import numpy as np")
+    e.blank()
+    e.blank()
+    e.line("def restriction_1d(u_fine, u_coarse):")
+    with e.indent():
+        e.line(f'"""Volume-weighted restriction with refinement factor {r}."""')
+        e.line("n_coarse = u_coarse.shape[0]")
+        e.line("for i in range(n_coarse):")
+        with e.indent():
+            e.line(f"u_coarse[i] = u_fine[i * {r}:(i + 1) * {r}].mean()")
+
+
+# ---------------------------------------------------------------------------
+# 2D kernels
+# ---------------------------------------------------------------------------
+
+def _emit_prolongation_2d(e: CodeEmitter, r: int) -> None:
+    """2D bilinear interpolation from coarse to fine."""
+    e.line('"""2D prolongation: bilinear interpolation from coarse to fine grid."""')
+    e.blank()
+    e.line("import numpy as np")
+    e.blank()
+    e.blank()
+    e.line("def prolongation_2d(u_coarse, u_fine):")
+    with e.indent():
+        e.line(f'"""Bilinear prolongation with refinement factor {r}."""')
+        e.line("n0, n1 = u_coarse.shape")
+        e.line("for i in range(n0 - 1):")
+        with e.indent():
+            e.line("for j in range(n1 - 1):")
             with e.indent():
-                e.line("for j in range(Ny - 1):")
+                e.line(f"for di in range({r}):")
                 with e.indent():
-                    e.line("for ri in range(ratio):")
+                    e.line(f"for dj in range({r}):")
                     with e.indent():
-                        e.line("for rj in range(ratio):")
+                        e.line(f"fi = i * {r} + di")
+                        e.line(f"fj = j * {r} + dj")
+                        e.line(f"ai = di / {r}")
+                        e.line(f"aj = dj / {r}")
+                        e.line("u_fine[fi, fj] = (")
                         with e.indent():
-                            e.line("ai = (ri + 0.5) / ratio")
-                            e.line("aj = (rj + 0.5) / ratio")
-                            e.line("fi = i * ratio + ri")
-                            e.line("fj = j * ratio + rj")
-                            e.line("u_fine[fi, fj] = (")
-                            with e.indent():
-                                e.line("(1-ai)*(1-aj) * u_coarse[i, j] +")
-                                e.line("ai*(1-aj) * u_coarse[i+1, j] +")
-                                e.line("(1-ai)*aj * u_coarse[i, j+1] +")
-                                e.line("ai*aj * u_coarse[i+1, j+1]")
-                            e.line(")")
-        else:
-            e.line("raise NotImplementedError('3D prolongation not yet implemented')")
-
-    return e.render()
+                            e.line("(1 - ai) * (1 - aj) * u_coarse[i, j] +")
+                            e.line("ai * (1 - aj) * u_coarse[i + 1, j] +")
+                            e.line("(1 - ai) * aj * u_coarse[i, j + 1] +")
+                            e.line("ai * aj * u_coarse[i + 1, j + 1]")
+                        e.line(")")
 
 
-def generate_restriction_kernel(
-    ndim: int,
-    ratio: int = 2,
-    dtype: str = "float64",
-) -> str:
-    """Generate code for fine-to-coarse restriction (volume-weighted averaging)."""
-    e = CodeEmitter()
-    e.line('"""Restriction kernel: fine -> coarse (auto-generated)."""')
+def _emit_restriction_2d(e: CodeEmitter, r: int) -> None:
+    """2D volume-weighted restriction from fine to coarse."""
+    e.line('"""2D restriction: volume-weighted averaging from fine to coarse grid."""')
     e.blank()
-    e.line("import cupy as cp")
+    e.line("import numpy as np")
     e.blank()
-
-    e.line(f"def restrict_{ndim}d(u_fine, u_coarse):")
+    e.blank()
+    e.line("def restriction_2d(u_fine, u_coarse):")
     with e.indent():
-        e.line(f'"""Restrict fine array to coarse array (ratio={ratio})."""')
-        if ndim == 1:
-            e.line(f"ratio = {ratio}")
-            e.line("N_coarse = u_coarse.shape[0]")
-            e.line("for i in range(N_coarse):")
+        e.line(f'"""Volume-weighted restriction with refinement factor {r}."""')
+        e.line("n0, n1 = u_coarse.shape")
+        e.line("for i in range(n0):")
+        with e.indent():
+            e.line("for j in range(n1):")
             with e.indent():
-                e.line("u_coarse[i] = u_fine[i*ratio : (i+1)*ratio].mean()")
-        elif ndim == 2:
-            e.line(f"ratio = {ratio}")
-            e.line("Nx, Ny = u_coarse.shape")
-            e.line("for i in range(Nx):")
-            with e.indent():
-                e.line("for j in range(Ny):")
-                with e.indent():
-                    e.line("u_coarse[i, j] = u_fine[i*ratio:(i+1)*ratio, j*ratio:(j+1)*ratio].mean()")
-        else:
-            e.line("raise NotImplementedError('3D restriction not yet implemented')")
+                e.line(f"u_coarse[i, j] = u_fine[i * {r}:(i + 1) * {r}, j * {r}:(j + 1) * {r}].mean()")
 
-    return e.render()
+
+# ---------------------------------------------------------------------------
+# 3D kernels
+# ---------------------------------------------------------------------------
+
+def _emit_prolongation_3d(e: CodeEmitter, r: int) -> None:
+    """3D trilinear interpolation from coarse to fine."""
+    e.line('"""3D prolongation: trilinear interpolation from coarse to fine grid."""')
+    e.blank()
+    e.line("import numpy as np")
+    e.blank()
+    e.blank()
+    e.line("def prolongation_3d(u_coarse, u_fine):")
+    with e.indent():
+        e.line(f'"""Trilinear prolongation with refinement factor {r}."""')
+        e.line("n0, n1, n2 = u_coarse.shape")
+        e.line("for i in range(n0 - 1):")
+        with e.indent():
+            e.line("for j in range(n1 - 1):")
+            with e.indent():
+                e.line("for k in range(n2 - 1):")
+                with e.indent():
+                    e.line(f"for di in range({r}):")
+                    with e.indent():
+                        e.line(f"for dj in range({r}):")
+                        with e.indent():
+                            e.line(f"for dk in range({r}):")
+                            with e.indent():
+                                e.line(f"fi = i * {r} + di")
+                                e.line(f"fj = j * {r} + dj")
+                                e.line(f"fk = k * {r} + dk")
+                                e.line(f"ai = di / {r}")
+                                e.line(f"aj = dj / {r}")
+                                e.line(f"ak = dk / {r}")
+                                e.line("u_fine[fi, fj, fk] = (")
+                                with e.indent():
+                                    e.line("(1 - ai) * (1 - aj) * (1 - ak) * u_coarse[i, j, k] +")
+                                    e.line("ai * (1 - aj) * (1 - ak) * u_coarse[i + 1, j, k] +")
+                                    e.line("(1 - ai) * aj * (1 - ak) * u_coarse[i, j + 1, k] +")
+                                    e.line("(1 - ai) * (1 - aj) * ak * u_coarse[i, j, k + 1] +")
+                                    e.line("ai * aj * (1 - ak) * u_coarse[i + 1, j + 1, k] +")
+                                    e.line("ai * (1 - aj) * ak * u_coarse[i + 1, j, k + 1] +")
+                                    e.line("(1 - ai) * aj * ak * u_coarse[i, j + 1, k + 1] +")
+                                    e.line("ai * aj * ak * u_coarse[i + 1, j + 1, k + 1]")
+                                e.line(")")
+
+
+def _emit_restriction_3d(e: CodeEmitter, r: int) -> None:
+    """3D volume-weighted restriction from fine to coarse."""
+    e.line('"""3D restriction: volume-weighted averaging from fine to coarse grid."""')
+    e.blank()
+    e.line("import numpy as np")
+    e.blank()
+    e.blank()
+    e.line("def restriction_3d(u_fine, u_coarse):")
+    with e.indent():
+        e.line(f'"""Volume-weighted restriction with refinement factor {r}."""')
+        e.line("n0, n1, n2 = u_coarse.shape")
+        e.line("for i in range(n0):")
+        with e.indent():
+            e.line("for j in range(n1):")
+            with e.indent():
+                e.line("for k in range(n2):")
+                with e.indent():
+                    e.line(
+                        f"u_coarse[i, j, k] = u_fine["
+                        f"i * {r}:(i + 1) * {r}, "
+                        f"j * {r}:(j + 1) * {r}, "
+                        f"k * {r}:(k + 1) * {r}].mean()"
+                    )
