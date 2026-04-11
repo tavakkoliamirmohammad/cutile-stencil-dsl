@@ -23,6 +23,7 @@ from cutile_stencil.analysis.footprint import extract_footprint, compute_halo
 from cutile_stencil.analysis.tiling import compute_tile_config
 from cutile_stencil.analysis.temporal import compute_temporal_config
 from cutile_stencil.analysis.roofline import roofline_analysis
+from cutile_stencil.config import auto_detect_gpu
 
 
 @dataclass
@@ -230,7 +231,11 @@ def analyze(
         Complete analysis including tile config, temporal blocking, and roofline.
     """
     if hw is None:
-        hw = HardwareSpec()
+        preset = auto_detect_gpu()
+        if preset is not None:
+            hw = HardwareSpec.from_preset(preset, dtype=spec.dtype)
+        else:
+            hw = HardwareSpec()
 
     # Step 1: Extract footprint (skip if accesses already set, e.g. from bridge)
     if spec.accesses:
