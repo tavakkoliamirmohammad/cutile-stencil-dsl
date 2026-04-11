@@ -30,6 +30,7 @@ from cutile_stencil.config import auto_detect_gpu
 class AnalysisResult:
     """Complete analysis result for a stencil."""
     spec: StencilSpec
+    halo_widths: Tuple[int, ...]
     tile_config: TileConfig
     temporal_config: TemporalConfig
     roofline: RooflineResult
@@ -248,14 +249,14 @@ def analyze(
         halo = spec.halo_widths
     else:
         halo = compute_halo(accesses, spec.ndim)
-        spec.halo_widths = halo
+        spec.halo_widths = halo  # backward compat: ~30 tests read spec.halo_widths
 
     # Step 3: Tile configuration
     tile_cfg = compute_tile_config(spec, domain, hw)
 
     # Step 4: Temporal blocking
     temp_cfg = compute_temporal_config(spec, tile_cfg, hw)
-    spec.temporal_steps = temp_cfg.steps
+    spec.temporal_steps = temp_cfg.steps  # backward compat: tests read spec.temporal_steps
 
     # Step 5: Roofline analysis
     roof = roofline_analysis(spec, hw)
@@ -265,6 +266,7 @@ def analyze(
 
     return AnalysisResult(
         spec=spec,
+        halo_widths=halo,
         tile_config=tile_cfg,
         temporal_config=temp_cfg,
         roofline=roof,
@@ -314,7 +316,7 @@ def compile(
 
     # Validate brick layout if provided
     if layout is not None:
-        layout.validate(spec.ndim, spec.halo_widths)
+        layout.validate(spec.ndim, ar.halo_widths)
         layout.num_bricks(domain)  # validates divisibility
 
     # Generate code

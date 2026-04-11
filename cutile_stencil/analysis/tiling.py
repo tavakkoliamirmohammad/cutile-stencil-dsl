@@ -87,6 +87,4 @@ def compute_tile_config(
         nt = tuple(math.ceil(d / 32) for d in domain_size)
         best = TileConfig(tile, halo, nt, _overhead(tile, halo))
 
-    spec.tile_sizes = best.tile_sizes
-    spec.halo_widths = best.halo_widths
     return best
