@@ -8,11 +8,13 @@ Array.slice(), so the launcher just passes original arrays + constants.
 from __future__ import annotations
 
 import os
+import warnings
 from pathlib import Path
 from typing import Optional
 
 from cutile_stencil.codegen.emitter import CodeEmitter
 from cutile_stencil.codegen.ast_transform import transform_stencil_expr
+from cutile_stencil.codegen.errors import CodegenWarning
 from cutile_stencil.dsl.types import StencilSpec, TileConfig, TemporalConfig, BrickLayout
 from cutile_stencil.config import BenchmarkConfig, DEFAULT_BENCHMARK
 
@@ -342,7 +344,14 @@ class StencilCodeGenerator:
                 spec.update_fn, spec.accesses, spec.ndim, term_names
             )
             e.line(f"result = {expr_src}")
-        except Exception:
+        except Exception as exc:
+            warnings.warn(
+                f"AST transform failed for {spec.name}: {exc}. "
+                f"Generated kernel uses fallback sum expression.",
+                CodegenWarning,
+                stacklevel=2,
+            )
+            e.line("# WARNING: AST transform failed, using fallback sum")
             terms = [f"t_{vn}" for vn, _, _ in access_names]
             e.line(f"result = {' + '.join(terms)}")
 
@@ -353,7 +362,14 @@ class StencilCodeGenerator:
                 spec.update_fn, spec.accesses, spec.ndim, term_names
             )
             e.line(f"result = {expr_src}")
-        except Exception:
+        except Exception as exc:
+            warnings.warn(
+                f"AST transform failed for {spec.name}: {exc}. "
+                f"Generated kernel uses fallback sum expression.",
+                CodegenWarning,
+                stacklevel=2,
+            )
+            e.line("# WARNING: AST transform failed, using fallback sum")
             e.line(f"result = {' + '.join(term_names)}")
 
     # ------------------------------------------------------------------
