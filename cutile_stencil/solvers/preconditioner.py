@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from cutile_stencil.codegen.emitter import CodeEmitter
 from cutile_stencil.dsl.types import StencilSpec
 

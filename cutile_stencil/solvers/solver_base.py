@@ -137,6 +137,76 @@ def emit_cg_function(
         emit_cg_loop(e, operator_call, cfg, dtype)
 
 
+def emit_preconditioned_cg_loop(
+    e: CodeEmitter,
+    operator_call: str,
+    cfg: SolverConfig | None = None,
+    dtype: str = "float64",
+) -> None:
+    """Emit the preconditioned CG iteration body.
+
+    Implements preconditioned CG where z = M^{-1} r and beta is computed
+    using dot(r, z) instead of dot(r, r).
+
+    Assumes the following names are already in scope in the generated code:
+    ``x``, ``r``, ``z``, ``p``, ``Ap``, ``buf``, ``stream``, ``grid``,
+    ``dot_kernel``, ``axpy_kernel``, ``launch_jacobi_precondition``,
+    ``tile_size``, ``math``, ``ct``.
+    The variable ``r_dot_z`` must be initialised before calling this.
+
+    Parameters
+    ----------
+    e : CodeEmitter
+        The emitter to write into (at current indent level).
+    operator_call : str
+        Code string that computes ``Ap = A @ p``.
+    cfg : SolverConfig, optional
+        Solver configuration for defaults.
+    dtype : str
+        Data type string.
+    """
+    cfg = cfg or DEFAULT_SOLVER
+
+    e.line("for it in range(max_iter):")
+    with e.indent():
+        e.line("if math.sqrt(abs(r_dot_z)) < tol:")
+        with e.indent():
+            e.line("return x, it, math.sqrt(abs(r_dot_z))")
+        e.blank()
+        e.line("# Ap = A @ p")
+        e.line(operator_call)
+        e.blank()
+        e.line("# p_dot_Ap = p^T Ap")
+        e.line("buf.fill(0)")
+        e.line("ct.launch(stream, grid, dot_kernel, (p, Ap, buf, tile_size))")
+        e.line("p_dot_Ap = buf.item()")
+        e.blank()
+        e.line("alpha = r_dot_z / p_dot_Ap")
+        e.blank()
+        e.line("# x = x + alpha * p")
+        e.line("ct.launch(stream, grid, axpy_kernel, (p, x, alpha, tile_size))")
+        e.blank()
+        e.line("# r = r - alpha * Ap")
+        e.line("ct.launch(stream, grid, axpy_kernel, (Ap, r, -alpha, tile_size))")
+        e.blank()
+        e.line("# z = M^{-1} r  (apply preconditioner to new residual)")
+        e.line("launch_jacobi_precondition(r, z)")
+        e.blank()
+        e.line("# new_r_dot_z = r^T z")
+        e.line("buf.fill(0)")
+        e.line("ct.launch(stream, grid, dot_kernel, (r, z, buf, tile_size))")
+        e.line("new_r_dot_z = buf.item()")
+        e.blank()
+        e.line("beta = new_r_dot_z / r_dot_z")
+        e.blank()
+        e.line("# p = z + beta * p")
+        e.line("p = z + beta * p")
+        e.blank()
+        e.line("r_dot_z = new_r_dot_z")
+    e.blank()
+    e.line("return x, max_iter, math.sqrt(abs(r_dot_z))")
+
+
 def emit_inner_cg_function(
     e: CodeEmitter,
     operator_call: str,
