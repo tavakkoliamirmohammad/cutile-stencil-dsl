@@ -270,39 +270,55 @@ def extract_closure_constants(func) -> Dict[str, Any]:
             if isinstance(val, (int, float, bool, str)):
                 constants[name] = val
 
-    # Method 2: Check __globals__ for names used in the function body
-    # that aren't parameters, builtins, or array names
+    # Method 2: Check __globals__ for names used in the stencil computation
+    # Only capture names that appear in the return expression (after inlining),
+    # not in dead code or debug statements.
     if hasattr(func, '__code__'):
+        import builtins as _builtins
+        src = None
         try:
             src = textwrap.dedent(inspect.getsource(func))
         except OSError:
             if hasattr(func, '_source'):
                 src = func._source
-            else:
-                return constants
-        tree = ast.parse(src)
-        func_def = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                func_def = node
-                break
 
-        if func_def is not None:
-            param_names = {arg.arg for arg in func_def.args.args}
-            # Collect all Name references in the function body
-            used_names = set()
-            for node in ast.walk(func_def):
-                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                    used_names.add(node.id)
+        builtin_names = set(dir(_builtins))
+        param_names = {func.__code__.co_varnames[i] for i in range(func.__code__.co_argcount)}
+        func_globals = getattr(func, '__globals__', {})
 
-            # Check globals for scalar constants
-            func_globals = getattr(func, '__globals__', {})
-            for name in used_names - param_names:
-                if name in constants:
-                    continue  # Already captured from closure
-                if name in func_globals:
-                    val = func_globals[name]
-                    if isinstance(val, (int, float, bool, str)):
-                        constants[name] = val
+        if src is not None:
+            # AST-based approach: only capture names from the return expression
+            tree = ast.parse(src)
+            func_def = None
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef):
+                    func_def = node
+                    break
+
+            if func_def is not None:
+                # Inline intermediates and find names in the return expression only
+                inliner = InlineTransformer()
+                new_body = []
+                for stmt in func_def.body:
+                    result = inliner.visit(stmt)
+                    if result is not None:
+                        new_body.append(result)
+
+                # Collect names from the return expression (the stencil computation)
+                used_names = set()
+                for stmt in new_body:
+                    if isinstance(stmt, ast.Return) and stmt.value is not None:
+                        for node in ast.walk(stmt.value):
+                            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                                used_names.add(node.id)
+
+                # Check globals for scalar constants, excluding builtins and params
+                for name in used_names - param_names - builtin_names:
+                    if name in constants:
+                        continue  # Already captured from closure
+                    if name in func_globals:
+                        val = func_globals[name]
+                        if isinstance(val, (int, float, bool, str)):
+                            constants[name] = val
 
     return constants
