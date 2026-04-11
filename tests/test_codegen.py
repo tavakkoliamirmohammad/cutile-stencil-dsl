@@ -135,8 +135,23 @@ class TestStencilCodegen:
 
     def test_1d_kernel_params_simple(self):
         code = _gen_1d().emit()
-        # Kernel params: just the array + output + TILE + HALO
-        assert "heat_kernel(u, output, TILE: ConstInt, HALO: ConstInt)" in code
+        # Kernel params: uses nD-style TX/HX names
+        assert "heat_kernel(u, output, TX: ConstInt, HX: ConstInt)" in code
+
+    def test_1d_uses_nd_pattern(self):
+        """After unification, 1D should use the same nD pattern."""
+        code = _gen_1d().emit()
+        # Should use nD-style bid variable
+        assert "bx = ct.bid(0)" in code
+        # Should use TX/HX not TILE/HALO
+        assert "TX: ConstInt" in code
+        assert "HX: ConstInt" in code
+        # Should use nD launcher param names
+        assert "u_in" in code
+
+    def test_1d_kernel_has_halo_params(self):
+        code = _gen_1d().emit()
+        assert "HX: ConstInt" in code
 
     def test_2d_kernel_has_halo_params(self):
         code = _gen_2d().emit()
