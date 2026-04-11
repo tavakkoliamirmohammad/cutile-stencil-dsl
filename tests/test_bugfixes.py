@@ -274,3 +274,42 @@ class TestTemporalBlockingDimensionIndependentHalos:
             assert "ct.load" in code
             assert "ct.bid(0)" in code
             assert "ct.bid(1)" in code
+
+
+class TestClosureCaptureScope:
+    """extract_closure_constants must only capture names used in the stencil expression."""
+
+    def test_unused_global_not_captured(self):
+        """A module-level scalar that is NOT in the return expression must not be captured."""
+        src = '''
+def stencil_with_extra(u, i):
+    debug_size = GRID_SIZE
+    return u[i - 1] + dt * u[i] + u[i + 1]
+'''
+        globs = {"GRID_SIZE": 1024, "dt": 0.01}
+        exec(compile(src, "<test>", "exec"), globs)
+        func = globs["stencil_with_extra"]
+        func._source = src.strip()  # Enable AST path in extract_closure_constants
+
+        constants = extract_closure_constants(func)
+        assert "dt" in constants, "dt should be captured (used in return expression)"
+        assert constants["dt"] == 0.01
+        assert "GRID_SIZE" not in constants, (
+            "GRID_SIZE should NOT be captured — it is not used in the stencil return expression"
+        )
+
+    def test_builtins_not_captured(self):
+        """Built-in names like True, False must not be captured as constants."""
+        src = '''
+def stencil_with_builtin(u, i):
+    return u[i - 1] + u[i + 1]
+'''
+        globs = {"__builtins__": __builtins__}
+        exec(compile(src, "<test>", "exec"), globs)
+        func = globs["stencil_with_builtin"]
+        func._source = src.strip()  # Enable AST path
+
+        constants = extract_closure_constants(func)
+        import builtins
+        for name in constants:
+            assert name not in dir(builtins), f"Built-in '{name}' should not be captured"
