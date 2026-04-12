@@ -85,17 +85,17 @@ class CompileResult:
 
         hw = self.halo_widths
         ndim = self.ndim
+        T = self.temporal_steps
 
         if u_input is None:
-            shape = tuple(128 + 2 * h for h in hw) if ndim == 1 else tuple(
-                64 + 2 * h for h in hw
-            )
+            base = 128 if ndim == 1 else 64
+            shape = tuple(base + 2 * T * h for h in hw)
             u_np = np.random.rand(*shape)
         else:
             u_np = np.asarray(u_input)
-
-        # CPU reference
-        ref_out = apply_stencil(u_np, self._ref_fn, ndim, hw)
+        ref_out = u_np.copy()
+        for _ in range(T):
+            ref_out = apply_stencil(ref_out, self._ref_fn, ndim, hw)
 
         # GPU kernel
         mod = self.load_module()
@@ -106,7 +106,8 @@ class CompileResult:
         cp.cuda.Device().synchronize()
         gpu_out = cp.asnumpy(out_gpu)
 
-        interior = tuple(slice(h, s - h) for h, s in zip(hw, u_np.shape))
+        margins = tuple(T * h for h in hw)
+        interior = tuple(slice(m, s - m) for m, s in zip(margins, u_np.shape))
         max_diff = float(np.max(np.abs(ref_out[interior] - gpu_out[interior])))
         ok = np.allclose(ref_out[interior], gpu_out[interior], atol=atol)
         print(f"Validation: max_diff={max_diff:.2e}, pass={ok}")
