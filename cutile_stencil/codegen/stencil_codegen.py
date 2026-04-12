@@ -192,6 +192,8 @@ class StencilCodeGenerator:
             t_args = ", ".join(t_vars)
             h_args = ", ".join(h_vars)
             e.line(f"ct.launch(stream, grid, {spec.name}_kernel, ({args}, u_out, {t_args}, {h_args}))")
+            if spec.boundary is not None:
+                e.line(f"apply_boundary_{spec.name}(u_out, stream=stream)")
 
     def _emit_benchmark_nd(self, e, spec, ndim, tile_sizes, halo_widths):
         """Emit an nD benchmark __main__ block."""
@@ -253,6 +255,8 @@ class StencilCodeGenerator:
         access_names = self._build_access_names(spec)
         # Emit the single-step kernel (reused for each temporal step)
         self._emit_kernel_nd(e, spec, access_names, ndim, tile_sizes, halo_widths)
+        if spec.boundary is not None:
+            self._emit_boundary_fill_kernel(e)
         # Emit temporal launcher that calls the kernel T times with buffer swaps
         self._emit_temporal_launcher_nd(e, spec, ndim, tile_sizes, halo_widths, T)
         return e.render()
@@ -315,6 +319,8 @@ class StencilCodeGenerator:
                 e.line(f"ct.launch(stream, grid, {spec.name}_kernel, "
                        f"(bufs[_step], bufs[_step + 1], "
                        f"{', '.join(t_vars)}, {', '.join(h_vars)}))")
+                if spec.boundary is not None:
+                    e.line(f"apply_boundary_{spec.name}(bufs[_step + 1], stream=stream)")
 
     # ------------------------------------------------------------------
     # Stencil expression emission

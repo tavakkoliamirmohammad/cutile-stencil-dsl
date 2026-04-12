@@ -123,7 +123,6 @@ class TestBoundaryGPUValidation:
         mod = importlib.util.module_from_spec(mod_spec)
         mod_spec.loader.exec_module(mod)
         launch = getattr(mod, f"launch_{spec.name}")
-        apply_bc = getattr(mod, f"apply_boundary_{spec.name}", None)
 
         # Input
         np.random.seed(42)
@@ -133,17 +132,12 @@ class TestBoundaryGPUValidation:
         # Apply initial boundary conditions
         _apply_boundary_conditions(u_np, bc_spec, halo)
 
-        # GPU: n_steps of stencil + boundary
+        # GPU: n_steps of stencil (launcher applies boundary automatically)
         u_gpu = cp.asarray(u_np)
         out_gpu = cp.zeros_like(u_gpu)
         for step in range(n_steps):
             launch(u_gpu, out_gpu)
             cp.cuda.Device(0).synchronize()
-            # Apply boundary conditions to output
-            if apply_bc is not None:
-                apply_bc(out_gpu)
-                cp.cuda.Device(0).synchronize()
-            # Swap buffers
             u_gpu, out_gpu = out_gpu, u_gpu
         gpu_result = cp.asnumpy(u_gpu)
 
