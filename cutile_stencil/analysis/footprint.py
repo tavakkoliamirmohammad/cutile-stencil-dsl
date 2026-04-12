@@ -78,7 +78,8 @@ def extract_footprint(spec: StencilSpec) -> List[OffsetAccess]:
     index_names = tuple(params[-spec.ndim:])
     visitor = _OffsetVisitor(spec.inputs, index_names)
     visitor.visit(tree)
-    spec.accesses = visitor.accesses
+    if not spec.accesses:
+        spec.accesses = visitor.accesses
     return visitor.accesses
 
 

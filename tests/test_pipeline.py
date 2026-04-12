@@ -259,6 +259,56 @@ class TestGPUPresetsExport:
         assert bs.conditions[0][0].bc_type == BoundaryType.PERIODIC
 
 
+class TestSpecMutation:
+    def test_analyze_sets_halo_widths_on_result(self):
+        @stencil(ndim=1, order=2)
+        def heat(u, i):
+            return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
+
+        spec = heat._stencil_spec
+        result = analyze(spec, domain=(1024,))
+        # New field on AnalysisResult
+        assert result.halo_widths == (1,)
+        # Also still set on spec for backward compat
+        assert result.spec.halo_widths == (1,)
+
+    def test_tiling_does_not_mutate_spec(self):
+        """compute_tile_config should no longer set spec.tile_sizes."""
+        from cutile_stencil.analysis.tiling import compute_tile_config
+        from cutile_stencil.analysis.footprint import extract_footprint, compute_halo
+
+        @stencil(ndim=1, order=2)
+        def heat(u, i):
+            return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
+
+        spec = heat._stencil_spec
+        extract_footprint(spec)
+        spec.halo_widths = compute_halo(spec.accesses, 1)
+        original_tile = spec.tile_sizes  # Should be None
+
+        hw = HardwareSpec()
+        cfg = compute_tile_config(spec, (1024,), hw)
+        # spec.tile_sizes should NOT have been set by compute_tile_config
+        assert spec.tile_sizes == original_tile
+
+    def test_footprint_does_not_overwrite_existing_accesses(self):
+        """extract_footprint should not overwrite pre-set accesses."""
+        from cutile_stencil.analysis.footprint import extract_footprint
+        from cutile_stencil.dsl.types import OffsetAccess
+
+        @stencil(ndim=1, order=2)
+        def heat(u, i):
+            return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
+
+        spec = heat._stencil_spec
+        # Pre-set accesses
+        original = [OffsetAccess("u", (-1,)), OffsetAccess("u", (1,))]
+        spec.accesses = original
+        extract_footprint(spec)
+        # Should keep original since accesses was non-empty
+        assert spec.accesses is original
+
+
 class TestAutoDetectGPU:
     def test_analyze_uses_detected_gpu(self):
         """When hw=None, analyze() should try auto-detecting the GPU."""
