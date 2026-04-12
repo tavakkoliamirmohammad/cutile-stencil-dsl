@@ -306,16 +306,11 @@ class StencilCodeGenerator:
                 e.line(f"bufs.append(cp.zeros_like({first_input}))")
             e.line(f"bufs.append(u_out)")
 
-            # Launch kernel T times
+            # Launch kernel T times with buffer swapping
             e.line(f"for _step in range({T}):")
             with e.indent():
-                if multi_input:
-                    # TODO: multi-input temporal not yet supported
-                    args = ", ".join(spec.inputs)
-                else:
-                    args = "bufs[_step]"
                 e.line(f"ct.launch(stream, grid, {spec.name}_kernel, "
-                       f"({args}, bufs[_step + 1], "
+                       f"(bufs[_step], bufs[_step + 1], "
                        f"{', '.join(t_vars)}, {', '.join(h_vars)}))")
 
     # ------------------------------------------------------------------
