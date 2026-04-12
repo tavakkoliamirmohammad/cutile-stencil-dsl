@@ -1097,3 +1097,137 @@ class TestCartesianDecomposition:
         assert CartesianPartition is not None
         assert CartesianDecomposition is not None
         assert decompose_cartesian is not None
+
+
+@multi_gpu_required
+class TestCartesianGPUValidation:
+    """Run 2D stencil with Cartesian decomposition and verify against CPU."""
+
+    def _run_cartesian_2d(self, topology, n_steps=5):
+        """Run 2D stencil with given Cartesian topology, verify vs CPU."""
+        import numpy as np
+        import importlib.util
+        import tempfile
+        from cutile_stencil import compile as stencil_compile
+        from cutile_stencil.reference.stencil_ref import apply_stencil
+        from cutile_stencil.multigpu.decomposition import decompose_cartesian
+
+        n_gpus = topology[0] * topology[1]
+        if _NUM_GPUS < n_gpus:
+            pytest.skip(f"Need >= {n_gpus} GPUs, have {_NUM_GPUS}")
+
+        hx, hy = 1, 1
+        # Global domain must be divisible by topology
+        global_nx, global_ny = 128, 128
+
+        @stencil(ndim=2, order=2)
+        def lap_cart(u, i, j):
+            return 0.25 * (u[i-1,j] + u[i+1,j] + u[i,j-1] + u[i,j+1])
+
+        spec = lap_cart._stencil_spec
+
+        decomp = decompose_cartesian(
+            domain=(global_nx, global_ny),
+            num_gpus=n_gpus,
+            halo_widths=(hx, hy),
+            topology=topology,
+        )
+
+        # Compile kernel for local domain size
+        local_nx = global_nx // topology[0]
+        local_ny = global_ny // topology[1]
+        result = stencil_compile(lap_cart, domain=(local_nx, local_ny))
+        with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
+            f.write(result.code)
+            kpath = f.name
+        ms = importlib.util.spec_from_file_location("_kcart", kpath)
+        mod = importlib.util.module_from_spec(ms)
+        ms.loader.exec_module(mod)
+        launch = getattr(mod, f"launch_{spec.name}")
+
+        np.random.seed(77)
+        u_global = np.random.randn(
+            global_nx + 2 * hx, global_ny + 2 * hy
+        ).astype(np.float64)
+
+        _enable_p2p(n_gpus)
+
+        # Distribute to GPUs based on Cartesian partitions
+        u_gpu = []
+        out_gpu = []
+        for rank in range(n_gpus):
+            p = decomp.partitions[rank]
+            cp.cuda.Device(rank).use()
+            ox, oy = p.local_offset
+            u_gpu.append(cp.asarray(
+                u_global[ox : ox + local_nx + 2*hx, oy : oy + local_ny + 2*hy]
+            ))
+            out_gpu.append(cp.zeros(
+                (local_nx + 2*hx, local_ny + 2*hy), dtype=cp.float64
+            ))
+
+        for step in range(n_steps):
+            for rank in range(n_gpus):
+                cp.cuda.Device(rank).use()
+                launch(u_gpu[rank], out_gpu[rank])
+            for rank in range(n_gpus):
+                cp.cuda.Device(rank).synchronize()
+
+            # Copy interior
+            for rank in range(n_gpus):
+                cp.cuda.Device(rank).use()
+                u_gpu[rank][hx:-hx, hy:-hy] = out_gpu[rank][hx:-hx, hy:-hy]
+
+            # Halo exchange along both axes using Cartesian neighbors
+            for rank in range(n_gpus):
+                p = decomp.partitions[rank]
+                cp.cuda.Device(rank).use()
+
+                # Axis 0 (rows): neighbors (0, +1) and (0, -1)
+                right = p.neighbors.get((0, +1))
+                left = p.neighbors.get((0, -1))
+                if right is not None:
+                    src = u_gpu[right][:hx + 1, :]  # first interior row
+                    u_gpu[rank][-hx:, :] = cp.asarray(cp.asnumpy(
+                        u_gpu[right][hx : 2*hx, :]
+                    ))
+                if left is not None:
+                    u_gpu[rank][:hx, :] = cp.asarray(cp.asnumpy(
+                        u_gpu[left][-2*hx : -hx, :]
+                    ))
+
+                # Axis 1 (cols): neighbors (1, +1) and (1, -1)
+                down = p.neighbors.get((1, +1))
+                up = p.neighbors.get((1, -1))
+                if down is not None:
+                    u_gpu[rank][:, -hy:] = cp.asarray(cp.asnumpy(
+                        u_gpu[down][:, hy : 2*hy]
+                    ))
+                if up is not None:
+                    u_gpu[rank][:, :hy] = cp.asarray(cp.asnumpy(
+                        u_gpu[up][:, -2*hy : -hy]
+                    ))
+
+        # CPU reference
+        u_cpu = u_global.copy()
+        for step in range(n_steps):
+            u_cpu = apply_stencil(u_cpu, spec)
+
+        for rank in range(n_gpus):
+            p = decomp.partitions[rank]
+            cp.cuda.Device(rank).use()
+            gpu_int = cp.asnumpy(u_gpu[rank])[hx:-hx, hy:-hy]
+            ox, oy = p.local_offset
+            cpu_int = u_cpu[hx+ox : hx+ox+local_nx, hy+oy : hy+oy+local_ny]
+            maxdiff = np.max(np.abs(gpu_int - cpu_int))
+            assert np.allclose(gpu_int, cpu_int, atol=1e-10), (
+                f"Rank {rank} (coords {p.coords}) mismatch: max_diff={maxdiff:.2e}"
+            )
+
+    def test_topology_1x2(self):
+        """Split along axis 1 only (2 columns)."""
+        self._run_cartesian_2d(topology=(1, 2))
+
+    def test_topology_2x1(self):
+        """Split along axis 0 only (2 rows)."""
+        self._run_cartesian_2d(topology=(2, 1))
