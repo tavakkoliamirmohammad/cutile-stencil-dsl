@@ -184,22 +184,19 @@ def _emit_multigpu_launcher(
     temporal_steps: int,
     overlap: bool,
 ) -> None:
-    """Emit the ``launch_multigpu_<name>`` host function."""
+    """Emit multi-GPU functions: setup, step, gather, and convenience launcher."""
     ndim = meta.ndim
     name = meta.name
-    t_vars = ["TX", "TY", "TZ"][:ndim]
-    h_vars = ["HX", "HY", "HZ"][:ndim]
-    n_vars = ["Nx", "Ny", "Nz"][:ndim]
+    hw = halo_widths[split_axis]
 
+    # --- setup: decompose once, allocate persistent buffers ---
     e.blank()
     e.blank()
-    e.line(f"def launch_multigpu_{name}(u_in, u_out, num_gpus={num_gpus}):")
+    e.line(f"def setup_multigpu_{name}(u_in, num_gpus={num_gpus}):")
     with e.indent():
-        e.line(f'"""Multi-GPU launcher with domain decomposition and halo exchange."""')
-        e.line(f"halo_width = {halo_widths[split_axis]}")
+        e.line(f'"""Decompose domain and allocate per-GPU buffers (call ONCE)."""')
+        e.line(f"halo_width = {hw}")
         e.line(f"split_axis = {split_axis}")
-        e.blank()
-        e.line("# Decompose domain across GPUs")
         e.line("partitions_in = decompose_domain(u_in, num_gpus, split_axis, halo_width)")
         e.line("partitions_out = []")
         e.line("for gpu_id in range(num_gpus):")
@@ -207,29 +204,37 @@ def _emit_multigpu_launcher(
             e.line("with cp.cuda.Device(gpu_id):")
             with e.indent():
                 e.line("partitions_out.append(cp.zeros_like(partitions_in[gpu_id]))")
-        e.blank()
+        e.line("return partitions_in, partitions_out")
 
-        if temporal_steps > 1:
-            e.line(f"# Temporal blocking: {temporal_steps} steps")
-            e.line(f"for _t_step in range({temporal_steps}):")
-            with e.indent():
-                _emit_multigpu_step_body(e, meta, tile_sizes, halo_widths, overlap)
-                e.line("# Swap buffers for next time step")
-                e.line("partitions_in, partitions_out = partitions_out, partitions_in")
-                e.line("# Re-zero output partitions")
-                e.line("for gpu_id in range(num_gpus):")
-                with e.indent():
-                    e.line("with cp.cuda.Device(gpu_id):")
-                    with e.indent():
-                        e.line("partitions_out[gpu_id][:] = 0")
-            e.blank()
-            e.line("# After the loop, results are in partitions_in (last swap)")
-            e.line("gather_results(u_out, partitions_in, num_gpus, split_axis, halo_width)")
-        else:
-            _emit_multigpu_step_body(e, meta, tile_sizes, halo_widths, overlap)
-            e.blank()
-            e.line("# Gather results back into u_out")
-            e.line("gather_results(u_out, partitions_out, num_gpus, split_axis, halo_width)")
+    # --- step: kernel launch + halo exchange (call per timestep) ---
+    e.blank()
+    e.blank()
+    e.line(f"def step_multigpu_{name}(partitions_in, partitions_out, num_gpus={num_gpus}):")
+    with e.indent():
+        e.line(f'"""Execute one timestep on all GPUs + halo exchange (fast)."""')
+        e.line(f"halo_width = {hw}")
+        e.line(f"split_axis = {split_axis}")
+        _emit_multigpu_step_body(e, meta, tile_sizes, halo_widths, overlap)
+
+    # --- gather: collect results back to single array (call ONCE) ---
+    e.blank()
+    e.blank()
+    e.line(f"def gather_multigpu_{name}(u_out, partitions, num_gpus={num_gpus}):")
+    with e.indent():
+        e.line(f'"""Gather per-GPU results back into full output array (call ONCE)."""')
+        e.line(f"halo_width = {hw}")
+        e.line(f"split_axis = {split_axis}")
+        e.line("gather_results(u_out, partitions, num_gpus, split_axis, halo_width)")
+
+    # --- convenience launcher (decompose + step + gather in one call) ---
+    e.blank()
+    e.blank()
+    e.line(f"def launch_multigpu_{name}(u_in, u_out, num_gpus={num_gpus}):")
+    with e.indent():
+        e.line(f'"""Convenience: decompose + step + gather in one call."""')
+        e.line(f"p_in, p_out = setup_multigpu_{name}(u_in, num_gpus)")
+        e.line(f"step_multigpu_{name}(p_in, p_out, num_gpus)")
+        e.line(f"gather_multigpu_{name}(u_out, p_out, num_gpus)")
 
 
 def _emit_multigpu_step_body(
