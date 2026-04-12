@@ -69,38 +69,52 @@ def _emit_decompose_domain(e: CodeEmitter, meta: _StencilMeta) -> None:
     e.blank()
     e.line("def decompose_domain(u, num_gpus, split_axis, halo_width):")
     with e.indent():
-        e.line('"""Split *u* into overlapping sub-domains across GPUs."""')
+        e.line('"""Split *u* into overlapping sub-domains across GPUs (P2P)."""')
         e.line("shape = u.shape")
         e.line("axis_len = shape[split_axis]")
-        e.line("# Interior size per GPU (excluding global boundary halos)")
         e.line("interior_total = axis_len - 2 * halo_width")
         e.line("base_chunk = interior_total // num_gpus")
         e.line("remainder = interior_total % num_gpus")
         e.blank()
+        e.line("# Enable P2P access between all GPU pairs")
+        e.line("for i in range(num_gpus):")
+        with e.indent():
+            e.line("for j in range(num_gpus):")
+            with e.indent():
+                e.line("if i != j:")
+                with e.indent():
+                    e.line("try:")
+                    with e.indent():
+                        e.line("cp.cuda.runtime.deviceEnablePeerAccess(j)")
+                    e.line("except cp.cuda.runtime.CUDARuntimeError:")
+                    with e.indent():
+                        e.line("pass  # already enabled or not supported")
+        e.blank()
         e.line("partitions = []")
         e.line("offset = 0")
+        e.line("src_device = u.device.id if hasattr(u, 'device') else 0")
         e.line("for gpu_id in range(num_gpus):")
         with e.indent():
             e.line("chunk = base_chunk + (1 if gpu_id < remainder else 0)")
-            e.line("# Start and stop in the full array (with halo overlap)")
             e.line("start = offset")
             e.line("stop = offset + chunk + 2 * halo_width")
             e.line("slices = [slice(None)] * len(shape)")
             e.line("slices[split_axis] = slice(start, stop)")
+            e.line("sub = u[tuple(slices)]")
             e.line("with cp.cuda.Device(gpu_id):")
             with e.indent():
-                e.line("partitions.append(cp.array(cp.asnumpy(u[tuple(slices)])))")
+                e.line("partitions.append(sub.copy())  # P2P copy if on different GPU")
             e.line("offset += chunk")
         e.line("return partitions")
 
 
 def _emit_exchange_halos(e: CodeEmitter, meta: _StencilMeta) -> None:
-    """Emit the ``exchange_halos`` helper function."""
+    """Emit the ``exchange_halos`` helper function using direct GPU P2P."""
     e.blank()
     e.blank()
     e.line("def exchange_halos(partitions, halo_width, split_axis):")
     with e.indent():
-        e.line('"""P2P halo exchange between adjacent GPU partitions."""')
+        e.line('"""Direct GPU-to-GPU P2P halo exchange (no CPU round-trip)."""')
         e.line("ndim = partitions[0].ndim")
         e.line("n = len(partitions)")
         e.line("for i in range(n - 1):")
@@ -113,10 +127,11 @@ def _emit_exchange_halos(e: CodeEmitter, meta: _StencilMeta) -> None:
             e.line("dst_sl = [slice(None)] * ndim")
             e.line("dst_sl[split_axis] = slice(0, halo_width)")
             e.blank()
-            e.line("right_halo = cp.asnumpy(partitions[i][tuple(src_sl)])")
+            e.line("# Direct P2P: copy from GPU i to GPU j")
+            e.line("src_data = partitions[i][tuple(src_sl)]")
             e.line("with cp.cuda.Device(j):")
             with e.indent():
-                e.line("partitions[j][tuple(dst_sl)] = cp.asarray(right_halo)")
+                e.line("partitions[j][tuple(dst_sl)] = cp.asarray(src_data)")
             e.blank()
             e.line("# partition[j] left boundary -> partition[i] right halo")
             e.line("src_sl2 = [slice(None)] * ndim")
@@ -124,10 +139,11 @@ def _emit_exchange_halos(e: CodeEmitter, meta: _StencilMeta) -> None:
             e.line("dst_sl2 = [slice(None)] * ndim")
             e.line("dst_sl2[split_axis] = slice(-halo_width, None)")
             e.blank()
-            e.line("left_halo = cp.asnumpy(partitions[j][tuple(src_sl2)])")
+            e.line("# Direct P2P: copy from GPU j to GPU i")
+            e.line("src_data2 = partitions[j][tuple(src_sl2)]")
             e.line("with cp.cuda.Device(i):")
             with e.indent():
-                e.line("partitions[i][tuple(dst_sl2)] = cp.asarray(left_halo)")
+                e.line("partitions[i][tuple(dst_sl2)] = cp.asarray(src_data2)")
 
 
 def _emit_gather_results(e: CodeEmitter, meta: _StencilMeta) -> None:
@@ -152,9 +168,9 @@ def _emit_gather_results(e: CodeEmitter, meta: _StencilMeta) -> None:
             e.line("# Destination in full output array")
             e.line("dst_sl = [slice(None)] * len(shape)")
             e.line("dst_sl[split_axis] = slice(halo_width + offset, halo_width + offset + chunk)")
-            e.line("with cp.cuda.Device(gpu_id):")
-            with e.indent():
-                e.line("u_out[tuple(dst_sl)] = cp.asarray(cp.asnumpy(partitions[gpu_id][tuple(src_sl)]))")
+            e.line("# Direct P2P copy back to output device")
+            e.line("src_data = partitions[gpu_id][tuple(src_sl)]")
+            e.line("u_out[tuple(dst_sl)] = cp.asarray(src_data)")
             e.line("offset += chunk")
 
 
