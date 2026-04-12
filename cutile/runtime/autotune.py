@@ -1,19 +1,22 @@
-"""Model-guided autotuning for stencil tile and temporal blocking parameters.
+"""Empirical autotuning for stencil tile sizes and temporal blocking.
 
-Uses a two-phase approach:
-
-1. **Analytical model** -- evaluate candidate tile configurations based on
-   shared-memory budget, halo overhead ratio, and estimated occupancy.
-2. **Empirical validation** -- (when GPU is available) benchmark the top
-   candidates and pick the fastest.
-
-Without GPU access the analytical model alone selects the configuration.
+Generates candidate configurations, benchmarks each on the actual GPU,
+and returns the fastest.  Results are cached by (stencil_name, ndim,
+halo_widths, gpu_name) so subsequent calls are instant.
 """
 
 from __future__ import annotations
 
+import ast
+import hashlib
+import importlib.util
+import json
 import math
-from dataclasses import dataclass
+import os
+import tempfile
+from dataclasses import dataclass, asdict
+from itertools import product as iterproduct
+from pathlib import Path
 from typing import Optional
 
 
@@ -25,180 +28,259 @@ class AutotuneResult:
     temporal_steps: int
     throughput_gpoints: float
     bandwidth_gbs: float
+    time_ms: float = 0.0
+
+
+# ------------------------------------------------------------------ #
+# Cache
+# ------------------------------------------------------------------ #
+
+_CACHE_DIR = Path.home() / ".cache" / "cutile" / "autotune"
+
+
+def _cache_key(name: str, ndim: int, halo: tuple[int, ...], gpu: str) -> str:
+    raw = f"{name}|{ndim}|{halo}|{gpu}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def _load_cache(key: str) -> Optional[AutotuneResult]:
+    path = _CACHE_DIR / f"{key}.json"
+    if path.exists():
+        try:
+            d = json.loads(path.read_text())
+            return AutotuneResult(**d)
+        except Exception:
+            pass
+    return None
+
+
+def _save_cache(key: str, result: AutotuneResult) -> None:
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    (_CACHE_DIR / f"{key}.json").write_text(json.dumps(asdict(result)))
+
+
+# ------------------------------------------------------------------ #
+# Candidate generation
+# ------------------------------------------------------------------ #
+
+_TILE_CANDIDATES_1D = [32, 64, 128, 256, 512]
+_TILE_CANDIDATES_2D = [8, 16, 32, 64, 128]
+_TILE_CANDIDATES_3D = [4, 8, 16, 32]
+
+
+def _generate_candidates(
+    ndim: int,
+    halo: tuple[int, ...],
+    shared_mem: int = 49152,
+    dtype_bytes: int = 8,
+    max_temporal: int = 8,
+) -> list[tuple[tuple[int, ...], int]]:
+    """Generate (tile_sizes, temporal_steps) candidates that fit in shared memory."""
+
+    if ndim == 1:
+        widths = _TILE_CANDIDATES_1D
+    elif ndim == 2:
+        widths = _TILE_CANDIDATES_2D
+    else:
+        widths = _TILE_CANDIDATES_3D
+
+    # Count loads: 2*ndim neighbors + possibly center = conservative upper bound
+    num_loads = 2 * ndim + 1  # overestimate is safe
+
+    candidates: list[tuple[tuple[int, ...], int]] = []
+
+    for combo in iterproduct(widths, repeat=ndim):
+        for T in range(max_temporal, 0, -1):
+            expanded = tuple(c + 2 * T * h for c, h in zip(combo, halo))
+            prod_expanded = math.prod(expanded)
+            prod_tile = math.prod(combo)
+
+            smem = (num_loads * prod_expanded + prod_tile) * dtype_bytes
+            if smem > shared_mem:
+                continue
+
+            candidates.append((combo, T))
+            break  # best T for this tile combo
+
+    # Also add T=1 for all tiles (no temporal blocking)
+    for combo in iterproduct(widths, repeat=ndim):
+        expanded = tuple(c + 2 * h for c, h in zip(combo, halo))
+        prod_expanded = math.prod(expanded)
+        prod_tile = math.prod(combo)
+        smem = (num_loads * prod_expanded + prod_tile) * dtype_bytes
+        if smem <= shared_mem:
+            if (combo, 1) not in candidates:
+                candidates.append((combo, 1))
+
+    return candidates
+
+
+# ------------------------------------------------------------------ #
+# Empirical benchmarking
+# ------------------------------------------------------------------ #
+
+
+def _benchmark_candidate(
+    stencil_fn,
+    tile_sizes: tuple[int, ...],
+    halo: tuple[int, ...],
+    temporal_steps: int,
+    domain: tuple[int, ...],
+    warmup: int = 10,
+    iters: int = 30,
+) -> Optional[float]:
+    """Benchmark a single candidate on GPU. Returns time in ms or None."""
+    import cupy as cp
+    from cutile.lowering.stencil_to_cutile import lower_stencil_to_python
+
+    try:
+        code = lower_stencil_to_python(
+            stencil_fn._ir.clone(),
+            tile_sizes=tile_sizes,
+            halo_widths=halo,
+            temporal_steps=temporal_steps,
+        )
+        ast.parse(code)
+
+        with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
+            f.write(code)
+            tmp = f.name
+
+        spec = importlib.util.spec_from_file_location("_at", tmp)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        launcher = getattr(mod, f"launch_{stencil_fn._fn.__name__}")
+
+        T = temporal_steps
+        shape = tuple(d + 2 * T * h for d, h in zip(domain, halo))
+        u = cp.random.randn(*shape).astype(cp.float64)
+        out = cp.zeros_like(u)
+
+        for _ in range(warmup):
+            launcher(u, out)
+        cp.cuda.Device(0).synchronize()
+
+        e1, e2 = cp.cuda.Event(), cp.cuda.Event()
+        e1.record()
+        for _ in range(iters):
+            launcher(u, out)
+        e2.record()
+        e2.synchronize()
+
+        ms = cp.cuda.get_elapsed_time(e1, e2) / iters
+        os.unlink(tmp)
+        return ms
+
+    except Exception:
+        return None
+
+
+# ------------------------------------------------------------------ #
+# Public API
+# ------------------------------------------------------------------ #
 
 
 def autotune(
     stencil_fn,
-    domain: tuple[int, ...],
+    domain: tuple[int, ...] | None = None,
     hw=None,
-    n_candidates: int = 20,
+    max_candidates: int = 30,
+    warmup: int = 10,
+    iters: int = 30,
+    verbose: bool = False,
 ) -> AutotuneResult:
-    """Model-guided autotuning with optional empirical validation.
+    """Empirically autotune tile sizes and temporal blocking.
 
-    Parameters
-    ----------
-    stencil_fn
-        ``@stencil``-decorated function with ``_ir``, ``_ndim``, ``_order``.
-    domain
-        Domain shape (including halos).
-    hw
-        Optional :class:`~cutile.config.HardwareSpec`.
-    n_candidates
-        Maximum number of candidates to evaluate analytically.
-
-    Returns
-    -------
-    AutotuneResult
+    Tries candidate configurations on the GPU and picks the fastest.
+    Results are cached so subsequent calls with the same stencil + GPU
+    are instant.
     """
     from cutile.config import HardwareSpec
 
     if hw is None:
-        dtype_str = getattr(stencil_fn, "_dtype", "float64")
         try:
-            hw = HardwareSpec.auto_detect(dtype_str)
+            hw = HardwareSpec.auto_detect("float64")
         except Exception:
             hw = HardwareSpec()
 
-    ndim = stencil_fn._ndim or len(domain)
+    ndim = stencil_fn._ndim or 2
     order = stencil_fn._order or 2
-    halo = order // 2 if order else 1
-    dtype_bytes = hw.dtype_bytes
-    shared_mem = hw.shared_mem_bytes
+    halo = tuple(order // 2 for _ in range(ndim))
+    name = stencil_fn._fn.__name__
 
-    # ------------------------------------------------------------------ #
-    # Phase 1: Analytical model -- enumerate and score candidates
-    # ------------------------------------------------------------------ #
-    candidate_tile_widths = [32, 64, 128, 256, 512, 1024]
-    max_temporal = 16
-
-    scored: list[tuple[float, tuple[int, ...], int]] = []
-
-    for tw in candidate_tile_widths:
-        tile = (tw,) * ndim
-
-        for t in range(max_temporal, 0, -1):
-            # Expanded tile with temporal blocking halos
-            expanded = tuple(tw + 2 * t * halo for _ in range(ndim))
-            smem = math.prod(expanded) * dtype_bytes * 2  # double-buffer
-
-            if smem > shared_mem:
-                continue
-
-            # Halo overhead: fraction of expanded tile that is pure halo
-            prod_tile = math.prod(tile)
-            prod_exp = math.prod(expanded)
-            overhead = 1.0 - prod_tile / prod_exp
-
-            # Temporal reuse factor: more steps = fewer kernel launches
-            reuse_score = t
-
-            # Combined score: lower overhead + higher temporal reuse is better
-            # The score is in "goodness" (higher = better)
-            score = reuse_score * (1.0 - overhead)
-
-            scored.append((score, tile, t))
-
-    # Sort by score descending, take top N
-    scored.sort(key=lambda x: x[0], reverse=True)
-    top = scored[:n_candidates]
-
-    if not top:
-        # Fallback
-        return AutotuneResult(
-            tile_sizes=(32,) * ndim,
-            temporal_steps=1,
-            throughput_gpoints=0.0,
-            bandwidth_gbs=0.0,
-        )
-
-    # ------------------------------------------------------------------ #
-    # Phase 2: Empirical validation (if GPU available)
-    # ------------------------------------------------------------------ #
-    best_score, best_tile, best_t = top[0]
-
+    # Check cache
     try:
         import cupy as cp
-        import numpy as np
+        gpu_name = cp.cuda.runtime.getDeviceProperties(0)["name"].decode()
+    except Exception:
+        gpu_name = "unknown"
 
-        from cutile.lowering.stencil_to_cutile import lower_stencil_to_python
+    cache_key = _cache_key(name, ndim, halo, gpu_name)
+    cached = _load_cache(cache_key)
+    if cached is not None:
+        if verbose:
+            print(f"autotune: cache hit for {name} on {gpu_name}")
+        return cached
 
-        best_throughput = 0.0
-        best_result = None
+    # Default domain for benchmarking if not provided
+    if domain is None:
+        if ndim == 1:
+            domain = (2**18,)
+        elif ndim == 2:
+            domain = (1024, 1024)
+        else:
+            domain = (64,) * ndim
 
-        for _score, tile, t in top[:5]:  # benchmark top 5
-            code = lower_stencil_to_python(
-                stencil_fn._ir.clone(),
-                domain=domain,
-                tile_sizes=tile,
-                halo_widths=(halo,) * ndim,
-                temporal_steps=t,
-            )
-
-            try:
-                import importlib.util
-                import tempfile
-
-                with tempfile.NamedTemporaryFile(
-                    suffix=".py", delete=False, mode="w"
-                ) as f:
-                    f.write(code)
-                    tmp_path = f.name
-                spec = importlib.util.spec_from_file_location(
-                    "_autotune_candidate", tmp_path
-                )
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-
-                launcher = getattr(
-                    mod, f"launch_{stencil_fn._fn.__name__}"
-                )
-                u_gpu = cp.random.rand(*domain)
-                out_gpu = cp.zeros_like(u_gpu)
-
-                # Warmup
-                for _ in range(3):
-                    launcher(u_gpu, out_gpu)
-                cp.cuda.Device().synchronize()
-
-                # Time
-                start = cp.cuda.Event()
-                end = cp.cuda.Event()
-                start.record()
-                for _ in range(10):
-                    launcher(u_gpu, out_gpu)
-                end.record()
-                end.synchronize()
-                elapsed_ms = float(
-                    cp.cuda.get_elapsed_time(start, end)
-                ) / 10
-
-                interior = 1
-                for h_dim, s in zip((halo,) * ndim, domain):
-                    interior *= s - 2 * h_dim
-                throughput = interior / elapsed_ms * 1e-6  # GPoints/s
-
-                if throughput > best_throughput:
-                    best_throughput = throughput
-                    gbytes = interior * 2 * dtype_bytes / elapsed_ms * 1e-6
-                    best_result = AutotuneResult(
-                        tile_sizes=tile,
-                        temporal_steps=t,
-                        throughput_gpoints=throughput,
-                        bandwidth_gbs=gbytes,
-                    )
-            except Exception:
-                continue
-
-        if best_result is not None:
-            return best_result
-
-    except ImportError:
-        pass  # No CuPy; use analytical result
-
-    # Analytical-only result
-    return AutotuneResult(
-        tile_sizes=best_tile,
-        temporal_steps=best_t,
-        throughput_gpoints=0.0,
-        bandwidth_gbs=0.0,
+    # Generate candidates
+    candidates = _generate_candidates(
+        ndim, halo,
+        shared_mem=hw.shared_mem_bytes,
+        dtype_bytes=hw.dtype_bytes,
     )
+
+    # Limit candidates
+    if len(candidates) > max_candidates:
+        # Prioritize: diverse tile sizes, prefer larger temporal steps
+        candidates.sort(key=lambda x: (x[1], math.prod(x[0])), reverse=True)
+        candidates = candidates[:max_candidates]
+
+    if verbose:
+        print(f"autotune: testing {len(candidates)} candidates for {name} ({ndim}D, halo={halo})")
+
+    # Benchmark each
+    best_ms = float("inf")
+    best_tile = (32,) * ndim
+    best_T = 1
+
+    for tile, T in candidates:
+        ms = _benchmark_candidate(stencil_fn, tile, halo, T, domain, warmup, iters)
+        if ms is not None and ms < best_ms:
+            best_ms = ms
+            best_tile = tile
+            best_T = T
+            if verbose:
+                tile_str = "x".join(str(t) for t in tile)
+                print(f"  {tile_str} T={T}: {ms:.4f} ms {'*best*' if ms == best_ms else ''}")
+
+    # Compute throughput
+    npoints = math.prod(domain)
+    effective_points = best_T * npoints
+    throughput = effective_points / (best_ms / 1000) / 1e9 if best_ms > 0 else 0
+    bandwidth = npoints * hw.dtype_bytes * 2 / (best_ms / 1000) / 1e9 if best_ms > 0 else 0
+
+    result = AutotuneResult(
+        tile_sizes=best_tile,
+        temporal_steps=best_T,
+        throughput_gpoints=throughput,
+        bandwidth_gbs=bandwidth,
+        time_ms=best_ms,
+    )
+
+    # Cache result
+    _save_cache(cache_key, result)
+
+    if verbose:
+        tile_str = "x".join(str(t) for t in best_tile)
+        print(f"autotune: best = {tile_str} T={best_T} ({throughput:.1f} GP/s, {best_ms:.4f} ms)")
+
+    return result
