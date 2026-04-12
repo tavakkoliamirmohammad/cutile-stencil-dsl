@@ -109,12 +109,12 @@ def _emit_decompose_domain(e: CodeEmitter, meta: _StencilMeta) -> None:
 
 
 def _emit_exchange_halos(e: CodeEmitter, meta: _StencilMeta) -> None:
-    """Emit the ``exchange_halos`` helper function using direct GPU P2P."""
+    """Emit the ``exchange_halos`` helper using contiguous P2P copies."""
     e.blank()
     e.blank()
     e.line("def exchange_halos(partitions, halo_width, split_axis):")
     with e.indent():
-        e.line('"""Direct GPU-to-GPU P2P halo exchange (no CPU round-trip)."""')
+        e.line('"""GPU-to-GPU halo exchange using contiguous buffers for P2P."""')
         e.line("ndim = partitions[0].ndim")
         e.line("n = len(partitions)")
         e.line("for i in range(n - 1):")
@@ -127,11 +127,13 @@ def _emit_exchange_halos(e: CodeEmitter, meta: _StencilMeta) -> None:
             e.line("dst_sl = [slice(None)] * ndim")
             e.line("dst_sl[split_axis] = slice(0, halo_width)")
             e.blank()
-            e.line("# Direct P2P: copy from GPU i to GPU j")
-            e.line("src_data = partitions[i][tuple(src_sl)]")
+            e.line("# Make contiguous on source GPU, then copy to dest GPU")
+            e.line("with cp.cuda.Device(i):")
+            with e.indent():
+                e.line("right_buf = cp.ascontiguousarray(partitions[i][tuple(src_sl)])")
             e.line("with cp.cuda.Device(j):")
             with e.indent():
-                e.line("partitions[j][tuple(dst_sl)] = cp.asarray(src_data)")
+                e.line("partitions[j][tuple(dst_sl)] = right_buf.copy()")
             e.blank()
             e.line("# partition[j] left boundary -> partition[i] right halo")
             e.line("src_sl2 = [slice(None)] * ndim")
@@ -139,11 +141,12 @@ def _emit_exchange_halos(e: CodeEmitter, meta: _StencilMeta) -> None:
             e.line("dst_sl2 = [slice(None)] * ndim")
             e.line("dst_sl2[split_axis] = slice(-halo_width, None)")
             e.blank()
-            e.line("# Direct P2P: copy from GPU j to GPU i")
-            e.line("src_data2 = partitions[j][tuple(src_sl2)]")
+            e.line("with cp.cuda.Device(j):")
+            with e.indent():
+                e.line("left_buf = cp.ascontiguousarray(partitions[j][tuple(src_sl2)])")
             e.line("with cp.cuda.Device(i):")
             with e.indent():
-                e.line("partitions[i][tuple(dst_sl2)] = cp.asarray(src_data2)")
+                e.line("partitions[i][tuple(dst_sl2)] = left_buf.copy()")
 
 
 def _emit_gather_results(e: CodeEmitter, meta: _StencilMeta) -> None:

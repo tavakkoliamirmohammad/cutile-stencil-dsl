@@ -187,7 +187,7 @@ def compile(
     hw=None,
     pipeline: Pipeline | None = None,
     temporal_blocking: bool = True,
-    autotune: bool = False,
+    autotune: bool = True,
     num_gpus: int = 1,
     split_axis: int = 0,
     overlap: bool = True,
