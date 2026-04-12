@@ -39,6 +39,8 @@ class StencilCodeGenerator:
     def emit(self) -> str:
         if self.layout is not None:
             return self._emit_bricked()
+        if self.temporal is not None and self.temporal.steps > 1:
+            return self._emit_temporal()
         e = CodeEmitter()
         self._emit_header(e)
         e.blank()
@@ -205,6 +207,116 @@ class StencilCodeGenerator:
             e.line("out = cp.zeros_like(u)")
             e.line(f"launch_{spec.name}(u, out)")
             e.line("print('Kernel launched successfully')")
+
+    # ------------------------------------------------------------------
+    # Temporal blocking codegen (multi-step through intermediate buffers)
+    # ------------------------------------------------------------------
+    def _emit_temporal(self) -> str:
+        """Emit a temporal-blocking kernel with T load-compute-store steps.
+
+        For T temporal steps the kernel unrolls T sections.  Step 0 reads
+        from u_in (with expanded halo), intermediate steps read/write through
+        temporary buffers, and the final step writes to u_out.
+
+        All buffers (input, intermediates, output) have the same shape
+        ``N = n + 2*T*halo`` per dimension.
+
+        The grid is based on ``n_expanded = N - 2*halo = n + 2*(T-1)*halo``
+        (the step-0 output size, which is the largest).  Later steps produce
+        fewer useful elements but the extra blocks harmlessly write into
+        zero-initialised halo positions.
+
+        At step *s* (0-indexed):
+
+        - Source view for access with offset ``off``:
+            ``start = s*halo + off,  size = n_expanded``
+        - Store view:
+            ``start = (s+1)*halo,    size = n_expanded``
+        - Source array:  u_in (s=0) or u_tmp{s-1} (s>0)
+        - Dest array:    u_tmp{s} (s<T-1) or u_out (s=T-1)
+        """
+        e = CodeEmitter()
+        spec = self.spec
+        ndim = spec.ndim
+        tile_sizes = self.tile.tile_sizes
+        halo_widths = self.tile.halo_widths
+        T = self.temporal.steps
+
+        self._emit_header(e)
+        e.blank()
+        e.line("ConstInt = ct.Constant[int]")
+        e.blank()
+
+        access_names = self._build_access_names(spec)
+        # Emit the single-step kernel (reused for each temporal step)
+        self._emit_kernel_nd(e, spec, access_names, ndim, tile_sizes, halo_widths)
+        # Emit temporal launcher that calls the kernel T times with buffer swaps
+        self._emit_temporal_launcher_nd(e, spec, ndim, tile_sizes, halo_widths, T)
+        return e.render()
+
+    def _emit_temporal_launcher_nd(self, e, spec, ndim, tile_sizes, halo_widths, T):
+        """Emit launcher for temporal blocking.
+
+        Allocates T-1 intermediate buffers and launches the standard kernel
+        T times, swapping source/destination buffers each step.  Each kernel
+        launch acts as a global barrier, ensuring correctness.
+
+        Note: a fused single-kernel approach using ct.atomic_add spin-wait
+        barriers is possible (tested successfully for 1D/2D) but risks
+        deadlock when the GPU can't schedule all blocks simultaneously,
+        and the cuTile compiler struggles with large unrolled kernels (3D).
+        The multi-launch approach is simpler and universally correct.
+        """
+        multi_input = len(spec.inputs) > 1
+        t_vars = ["TX", "TY", "TZ"][:ndim]
+        h_vars = ["HX", "HY", "HZ"][:ndim]
+
+        e.blank()
+        e.blank()
+        if multi_input:
+            input_params = ", ".join(spec.inputs)
+            e.line(f"def launch_{spec.name}({input_params}, u_out, stream=None):")
+        else:
+            e.line(f"def launch_{spec.name}(u_in, u_out, stream=None):")
+        with e.indent():
+            e.line(f"{', '.join(t_vars)} = {', '.join(str(t) for t in tile_sizes)}")
+            e.line(f"{', '.join(h_vars)} = {', '.join(str(h) for h in halo_widths)}")
+
+            first_input = spec.inputs[0] if multi_input else "u_in"
+
+            e.line("if stream is None:")
+            with e.indent():
+                e.line("stream = cp.cuda.get_current_stream()")
+
+            # Grid based on n_expanded = shape - 2*halo per dim
+            grid_parts = []
+            for d in range(ndim):
+                h = halo_widths[d]
+                grid_parts.append(
+                    f"ct.cdiv({first_input}.shape[{d}] - {2 * h}, {t_vars[d]})"
+                )
+            trailing = "," if ndim == 1 else ""
+            e.line(f"grid = ({', '.join(grid_parts)}{trailing})")
+
+            # Build buffer chain: u_in -> tmp0 -> tmp1 -> ... -> u_out
+            e.line(f"# Temporal blocking: {T} steps with buffer swapping")
+            e.line(f"bufs = [{first_input}]")
+            e.line(f"for _ in range({T - 1}):")
+            with e.indent():
+                e.line(f"bufs.append(cp.zeros_like({first_input}))")
+            e.line(f"bufs.append(u_out)")
+
+            # Launch kernel T times
+            e.line(f"for _step in range({T}):")
+            with e.indent():
+                if multi_input:
+                    # TODO: multi-input temporal not yet supported
+                    args = ", ".join(spec.inputs)
+                else:
+                    args = "bufs[_step]"
+                e.line(f"ct.launch(stream, grid, {spec.name}_kernel, "
+                       f"({args}, bufs[_step + 1], "
+                       f"{', '.join(t_vars)}, {', '.join(h_vars)}))")
 
     # ------------------------------------------------------------------
     # Stencil expression emission

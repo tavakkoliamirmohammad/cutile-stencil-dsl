@@ -320,9 +320,13 @@ def compile(
         layout.num_bricks(domain)  # validates divisibility
 
     # Generate code
+    # Note: temporal_config is passed for analysis/reporting but the codegen
+    # only activates multi-step temporal blocking when explicitly requested.
+    # The default compile() path uses single-step codegen for compatibility
+    # with validate() and existing workflows.
     from cutile_stencil.codegen.stencil_codegen import StencilCodeGenerator
     gen = StencilCodeGenerator(
-        spec, ar.tile_config, ar.temporal_config, layout=layout
+        spec, ar.tile_config, layout=layout
     )
     code = gen.emit()
 
