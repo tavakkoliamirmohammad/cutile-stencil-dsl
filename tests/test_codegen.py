@@ -157,6 +157,42 @@ class TestStencilCodegen:
         code = out.read_text()
         ast.parse(code)
 
+    def test_codegen_fallback_warns(self):
+        """Fallback expression must issue a CodegenWarning, not fail silently."""
+        import warnings
+        from cutile_stencil.codegen.errors import CodegenWarning
+        from cutile_stencil.dsl.types import StencilSpec, OffsetAccess, TileConfig
+
+        # Create a spec with a lambda update_fn — inspect.getsource() will fail
+        spec = StencilSpec(
+            name="bad_stencil",
+            ndim=1,
+            order=2,
+            inputs=("u",),
+            output="result",
+            update_fn=lambda u, i: u[i - 1] + u[i + 1],  # no source available
+            accesses=[
+                OffsetAccess("u", (-1,)),
+                OffsetAccess("u", (0,)),
+                OffsetAccess("u", (1,)),
+            ],
+            halo_widths=(1,),
+        )
+        cfg = TileConfig(tile_sizes=(256,), halo_widths=(1,), num_tiles=(4,), overhead_fraction=0.01)
+        gen = StencilCodeGenerator(spec, cfg)
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            code = gen.emit()
+            codegen_warnings = [x for x in w if issubclass(x.category, CodegenWarning)]
+            assert len(codegen_warnings) >= 1, "Expected CodegenWarning but got none"
+            assert "AST transform failed" in str(codegen_warnings[0].message)
+
+        # Generated code must still be valid Python
+        ast.parse(code)
+        # Fallback comment must be present
+        assert "WARNING" in code or "fallback" in code.lower()
+
 
 class TestSolverKernelCodegen:
     def test_dia_spmv(self):
