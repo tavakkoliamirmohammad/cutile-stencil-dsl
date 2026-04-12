@@ -149,10 +149,12 @@ cutile/
 |   |-- parser.py           # Python AST -> xDSL stencil dialect operations
 |   +-- types.py            # BoundarySpec, HardwareSpec, GPU presets, configs
 |
-|-- dialects/               # xDSL dialect definitions (three-dialect stack)
+|-- dialects/               # xDSL dialect definitions (three-dialect stack + supporting dialects)
 |   |-- cutile_stencil/     # Dialect 1: our high-level stencil dialect (mirrors Python syntax)
 |   |-- cutile_target/      # Dialect 3: cuTile target dialect (kernel, slice, load, store, launch, host program)
-|   +-- comm/               # Communication ops dialect (halo send/recv, barrier, sync)
+|   |-- comm/               # Communication dialect (halo send/recv, barrier - location-agnostic)
+|   |-- timestep/           # Time integration dialect (RK stages, combine, Euler/RK2/RK4/SSPRK3)
+|   +-- layout/             # Data layout types and conversion ops (row_major, bricked)
 |
 |-- passes/                 # Layer 2: IR transformations
 |   |-- analysis/           # Read-only passes
@@ -160,10 +162,12 @@ cutile/
 |   |   +-- roofline.py     # FLOP count, arithmetic intensity, bound classification
 |   |-- tiling.py           # Tile size selection (shared mem budget, overhead minimization)
 |   |-- temporal.py         # Temporal blocking (fuse time steps, expand halos, buffer chain)
-|   |-- bricked.py          # Bricked data layout (transform accesses to divmod addressing)
+|   |-- fusion.py           # Fuse multi-field stencils sharing inputs (optional)
+|   |-- bricked.py          # Bricked data layout (type-level layout change + conversion ops)
 |   |-- boundary.py         # Boundary condition insertion (periodic, Neumann, Dirichlet, reflecting)
-|   |-- decompose.py        # Domain decomposition (1D split or Cartesian grid)
-|   +-- halo.py             # Halo exchange insertion (abstract comm ops)
+|   |-- decompose.py        # Domain decomposition with interior/boundary separation (multi-GPU)
+|   |-- halo.py             # Halo exchange insertion with computation-communication overlap
+|   +-- verify.py           # IR well-formedness verification (runs after any pass)
 |
 |-- lowering/               # Layer 3: IR -> code
 |   |-- normalize.py          # Dialect 1 (cutile_stencil) -> Dialect 2 (xDSL stencil)
@@ -277,20 +281,46 @@ builtin.module {
 
 Each pass is an xDSL `RewritePattern` or `ModulePass` that transforms the IR. Passes are composable, independently testable, and can be enabled or disabled.
 
-### Pass Pipeline (execution order)
+### Pipeline Architecture
+
+The pass pipeline is exposed as an xDSL `PassManager` that users can configure. Instead of a hardcoded pass order, passes are composable building blocks:
+
+```python
+pipeline = Pipeline(hw=HardwareSpec.auto_detect())
+pipeline.add(AnalysisPass())
+pipeline.add(RooflinePass())
+pipeline.add(TilingPass())
+pipeline.add(BoundaryPass())
+pipeline.add(TemporalBlockingPass(max_T=4))
+pipeline.add(FusionPass())                          # fuse multi-field stencils
+# pipeline.add(BrickedLayoutPass())                 # optional
+pipeline.add(DecompositionPass(num_gpus=4, topology=(2,2)))
+pipeline.add(HaloExchangePass(overlap=True))
+pipeline.add(VerifyPass())                          # check IR well-formedness
+result = pipeline.run(stencil_ir)
+```
+
+Default pipelines are provided for common configurations:
+- `Pipeline.single_gpu(hw)` — passes 1-5
+- `Pipeline.multi_gpu(hw, num_gpus, topology)` — passes 1-9
+- `Pipeline.full(hw, num_gpus, topology)` — all passes including fusion and bricked layout
+
+### Pass Pipeline (default order)
 
 ```
-1. AnalysisPass            Read-only: extract footprint, compute halo widths
-2. RooflinePass            Read-only: count FLOPs, classify memory/compute bound
-3. TilingPass              Attach tile sizes based on hardware + halo + shared mem
-4. BoundaryPass            Insert boundary condition ops into IR
-5. TemporalBlockingPass    Fuse N time steps, expand halos, insert buffer chain
-6. BrickedLayoutPass       Transform accesses to bricked addressing (optional)
-7. DecompositionPass       Split domain across GPUs (multi-GPU)
-8. HaloExchangePass        Insert communication ops at sub-domain edges (multi-GPU)
+ 1. AnalysisPass            Read-only: extract footprint, compute halo widths
+ 2. RooflinePass            Read-only: count FLOPs, classify memory/compute bound
+ 3. TilingPass              Attach tile sizes based on hardware + halo + shared mem
+ 4. BoundaryPass            Insert boundary condition ops into IR
+ 5. TemporalBlockingPass    Fuse N time steps, expand halos, insert buffer chain
+ 6. FusionPass              Fuse multi-field stencils sharing inputs (optional)
+ 7. BrickedLayoutPass       Apply bricked data layout (optional, type-level)
+ 8. DecompositionPass       Split domain across GPUs, separate interior/boundary (multi-GPU)
+ 9. HaloExchangePass        Insert communication ops with overlap support (multi-GPU)
+10. VerifyPass              Validate IR well-formedness after all transformations
 ```
 
-Passes 1-6 are single-GPU. Passes 7-8 add multi-GPU support. A minimal compilation uses passes 1-4. A full multi-GPU temporally-blocked bricked-layout compilation uses all 8.
+Passes 1-5 are the minimal single-GPU pipeline. Passes 6-7 are optional optimizations. Passes 8-9 add multi-GPU. Pass 10 runs after any transformation.
 
 ### Pass Details
 
@@ -309,18 +339,105 @@ Reads `BoundarySpec` from IR metadata. Inserts boundary-handling ops: periodic w
 **TemporalBlockingPass:**
 Takes single-step stencil IR and produces multi-step IR. Determines max temporal depth T that fits in shared memory (expanded tile = `tile + 2*T*halo` per dimension). Wraps the stencil body in a temporal loop, inserts buffer swap ops between steps. The IR now contains a `host.for_loop(T)` with `cutile.launch` + `cutile.swap_buffers` inside. Replaces the tangled temporal logic in `stencil_codegen.py:_emit_temporal()`.
 
-**BrickedLayoutPass:**
-Transforms memory access patterns from row-major to bricked. Inserts `divmod` addressing: `brick_id = flat_index // brick_size`, `offset = flat_index % brick_size`. Adds layout conversion ops (flat-to-bricked, bricked-to-flat) for I/O boundaries. Replaces the current separate 180-line code path (`_emit_bricked`, `_emit_kernel_bricked_nd`).
+**FusionPass (optional):**
+Detects multiple `stencil.apply` ops within the same module that read from overlapping input fields. For example, Gray-Scott updates both `u` and `v`, and both reads from `u` and `v`. The FusionPass fuses these into a single `stencil.apply` that loads the shared inputs once and computes both outputs. This eliminates redundant memory traffic for multi-field problems. The fused kernel returns multiple output fields. If stencil applications have incompatible access patterns or data dependencies that prevent fusion, the pass leaves them separate.
+
+**BrickedLayoutPass (optional, type-level):**
+Data layout is a **type-level concept** in the IR, not an access transformation. Fields carry their layout:
+
+```
+!stencil.field<?x?xf64, layout=row_major>       # standard
+!stencil.field<?x?xf64, layout=bricked{32}>      # bricked with brick_size=32
+```
+
+The BrickedLayoutPass changes the layout attribute on field types and inserts layout conversion ops (`layout.cast`) at I/O boundaries (flat input → bricked for computation → flat output). The lowering pass reads the layout from the type and emits the appropriate addressing (standard indexing for row_major, divmod for bricked). This is more MLIR-idiomatic than transforming individual access patterns, and it composes cleanly: the emitter doesn't branch on layout — it reads the type.
 
 **DecompositionPass (multi-GPU):**
 Takes domain shape, number of GPUs, and topology (1D split along longest axis or Cartesian grid). Splits the `stencil.apply` domain into sub-domains. Creates per-GPU IR with sub-domain bounds. Attaches `gpu_id` and `neighbors` metadata.
 
-**HaloExchangePass (multi-GPU):**
-Reads sub-domain boundaries and halo widths. Inserts `comm.send_halo` / `comm.recv_halo` ops at domain edges. For temporal blocking with multi-GPU, inserts exchanges between time steps. Communication ops are abstract -- the lowering layer decides whether to use P2P or NCCL.
+Critically, this pass also **separates each sub-domain into interior and boundary regions.** Interior tiles do not depend on halo data from neighboring GPUs. Boundary tiles do. This separation enables computation-communication overlap in the HaloExchangePass.
+
+**HaloExchangePass (multi-GPU, with overlap):**
+Reads sub-domain boundaries and halo widths. Inserts `comm.send_halo` / `comm.recv_halo` ops at domain edges. Communication ops are **location-agnostic** — they can be placed in either host IR or device IR (see Communication Architecture below).
+
+When `overlap=True` (default), the pass produces an overlapped schedule:
+
+```
+host.async {
+    cutile.launch(interior_kernel, ...)     # compute interior (no halo dependency)
+    comm.exchange_halos(...)                # simultaneously exchange halos
+}
+host.sync()
+cutile.launch(boundary_kernel, ...)         # compute boundary (needs received halos)
+```
+
+This overlaps computation with communication, nearly hiding transfer latency for large domains where interior >> boundary. For temporal blocking with multi-GPU, exchanges are inserted between time steps within the temporal loop.
+
+**VerifyPass:**
+Runs after any transformation (or after all transformations). Uses xDSL's verification infrastructure to check IR invariants:
+- All `stencil.access` offsets are within declared halo bounds
+- Tile sizes are power-of-2 (cuTile constraint)
+- Buffer chains have balanced alloc/free
+- Multi-GPU sub-domain bounds are contiguous and cover the full domain
+- Communication ops have matching send/recv pairs
+- Layout types are consistent across operations
+
+This catches bugs in pass implementations early, rather than at emission or GPU runtime.
+
+### Communication Architecture
+
+Communication ops (`comm.send_halo`, `comm.recv_halo`, `comm.exchange_halos`, `comm.barrier`) are defined in the `comm` dialect and are **location-agnostic** — they carry semantics but not placement. The lowering pass decides where they go based on backend capabilities:
+
+**Today (host-side communication):**
+cuTile does not support GPU-initiated communication. The lowering pass places comm ops in the host IR:
+
+```
+cutile.host_program {
+    cutile.launch(interior_kernel, ...)
+    comm.exchange_halos(...)            # host orchestrates P2P/NCCL transfers
+    cutile.launch(boundary_kernel, ...)
+}
+```
+
+**Future (fused communication kernels):**
+When cuTile adds GPU-initiated communication (e.g., `ct.nccl_send()`), the lowering pass can place comm ops inside the device IR:
+
+```
+cutile.kernel {
+    cutile.compute_interior(...)
+    comm.send_halo(...)                 # GPU-initiated, inside kernel
+    comm.recv_halo(...)
+    cutile.compute_boundary(...)
+}
+```
+
+The IR does not change — only the lowering pass changes. This means the optimization passes (decomposition, overlap, temporal blocking) work identically regardless of whether communication is host-side or fused. The architecture is ready for future cuTile capabilities without redesign.
+
+### Time Stepping as a First-Class IR Concept
+
+Time integration methods (Euler, RK2, RK4, SSPRK3) are represented in the IR, not as external wrappers:
+
+```
+timestep.rk4 @heat_rk4(%u, dt) {
+    %k1 = stencil.apply @heat(%u)
+    %u1 = timestep.stage %u, %k1, dt, 0.5        # u + 0.5*dt*k1
+    %k2 = stencil.apply @heat(%u1)
+    %u2 = timestep.stage %u, %k2, dt, 0.5        # u + 0.5*dt*k2
+    %k3 = stencil.apply @heat(%u2)
+    %u3 = timestep.stage %u, %k3, dt, 1.0        # u + dt*k3
+    %k4 = stencil.apply @heat(%u3)
+    %out = timestep.combine %u, (%k1,%k2,%k3,%k4), dt, (1/6,1/3,1/3,1/6)
+    timestep.return %out
+}
+```
+
+This enables the TemporalBlockingPass to reason about multi-stage methods. For example, blocking across 2 RK4 steps means 8 kernel launches with specific data dependencies — the pass can determine expanded halo requirements and buffer chains for the full multi-stage sequence, not just single Euler steps. The FusionPass can also fuse the stage computations where data dependencies allow.
 
 ### Composability
 
-The key architectural win: passes compose without new code paths. Today, adding temporal blocking to multi-GPU requires duplicating temporal logic in `multigpu/codegen.py`. With passes, running `TemporalBlockingPass` and `DecompositionPass` on the same IR produces a temporally-blocked multi-GPU kernel automatically. Same for bricked + multi-GPU, or bricked + temporal + multi-GPU.
+The key architectural win: passes compose without new code paths. Today, adding temporal blocking to multi-GPU requires duplicating temporal logic in `multigpu/codegen.py`. With passes, running `TemporalBlockingPass` and `DecompositionPass` on the same IR produces a temporally-blocked multi-GPU kernel automatically. Same for bricked + multi-GPU, or bricked + temporal + multi-GPU, or fused + temporal + multi-GPU with overlap.
+
+Any combination of passes produces a valid IR that the lowering and emitter can handle, because each pass operates on the same standard dialect and the VerifyPass confirms well-formedness.
 
 ---
 
@@ -576,9 +693,9 @@ Results produce per-kernel performance tables and scaling efficiency plots.
 
 ---
 
-## RK Time Integrator (Demonstration)
+## Time Integration
 
-The Runge-Kutta integrator is retained as a demonstration of composability:
+Time integration is a first-class feature, not a wrapper. The user API:
 
 ```python
 @stencil(ndim=2, order=2)
@@ -589,7 +706,21 @@ integrator = RKIntegrator(heat, method="RK4")
 result = integrator.compile(domain=(256, 256))
 ```
 
-The stencil compiles through the normal pipeline. The RK4 wrapper generates host IR with four kernel launches per time step (one per RK stage) with coefficient scaling. This shows that compiled stencils compose into higher-level numerical methods.
+The frontend builds `timestep.rk4` IR that contains `stencil.apply` ops for each RK stage. This IR flows through the full pass pipeline — temporal blocking can reason about multi-stage dependencies, fusion can merge RK stages where possible, and multi-GPU decomposition applies uniformly. The lowering pass emits the appropriate kernel launches with coefficient scaling per stage.
+
+---
+
+## Diagnostics
+
+Each IR operation carries a source location pointing back to the original Python line in the user's `@stencil` function. When a pass produces an error or warning, the diagnostic references the user's code, not internal IR nodes.
+
+Examples:
+- TilingPass: "heat.py:3 — tile size 64x64 exceeds shared memory budget (requires 48KB, available 32KB), falling back to 32x32"
+- AnalysisPass: "heat.py:4 — asymmetric halo detected: left=2, right=1 on axis 0"
+- VerifyPass: "heat.py:3 — access offset [-3, 0] exceeds declared halo width of 1 on axis 0"
+- DecompositionPass: "heat.py:1 — domain 128x128 with 4 GPUs yields sub-domains of 64x64, halo overhead is 12%"
+
+The frontend parser attaches `loc` attributes (xDSL's source location infrastructure) when building Dialect 1 from the AST. The normalization pass propagates locations to Dialect 2. Passes that create new ops (e.g., boundary insertion, fusion) attach synthetic locations referencing the relevant source.
 
 ---
 
@@ -601,6 +732,17 @@ The following features from the current codebase are removed to keep the archite
 - **AMR** (adaptive mesh refinement) -- incomplete in current code, a research area of its own. Mentioned as future work in the paper.
 - **Triton backend** -- cuTile is the sole target
 - **Numba backend** -- cuTile is the sole target
+
+---
+
+## Future Work
+
+The following are architecturally sound extensions but are out of scope for the initial implementation:
+
+- **IR serialization and compilation caching** — Serialize Dialect 1 IR for ahead-of-time compilation, cache generated code keyed by IR hash to skip recompilation.
+- **Cost model as a pass output** — A queryable/updatable cost model that passes modify (e.g., temporal blocking updates memory traffic estimate, fusion updates FLOP count). Enables smarter autotuning without empirical measurement.
+- **Stencil composition** — Explicit piping of one stencil's output into another's input (`compose(smooth, laplacian)`), enabling cross-stencil temporal blocking and fusion.
+- **Additional backends** — The three-dialect architecture makes adding new targets (Triton, Numba CUDA, raw CUDA) possible by implementing only a new Dialect 3 and emitter. The optimization passes on Dialect 2 are reused.
 
 ---
 
