@@ -37,7 +37,7 @@ class TilingPass(ModulePass):
 
     shared_mem_bytes: int = 49152
     dtype_bytes: int = 8
-    candidate_sizes: tuple[int, ...] = (32, 64, 128, 256)
+    candidate_sizes: tuple[int, ...] = (4, 8, 16, 32, 64, 128, 256)
 
     def apply(self, ctx: Context, op: ModuleOp) -> None:
         for child in op.walk():
@@ -47,6 +47,9 @@ class TilingPass(ModulePass):
     # ------------------------------------------------------------------
 
     def _tile_apply(self, apply_op: ApplyOp) -> None:
+        from itertools import product as iterproduct
+        from xdsl.dialects.stencil import AccessOp
+
         # Must have halo_widths (set by AnalysisPass)
         halo_attr = apply_op.attributes.get("halo_widths")
         if halo_attr is None:
@@ -55,22 +58,32 @@ class TilingPass(ModulePass):
         halo: list[int] = [a.data for a in halo_attr]
         ndim: int = len(halo)
 
-        # Number of arrays accessed (input + output)
-        num_arrays_attr = apply_op.attributes.get("num_arrays")
-        num_arrays: int = num_arrays_attr.data if num_arrays_attr is not None else 1
+        # Count actual number of unique loads (stencil accesses) + 1 store
+        num_loads = 0
+        for child_op in apply_op.region.block.ops:
+            if isinstance(child_op, AccessOp):
+                num_loads += 1
+        num_loads = max(num_loads, 1)
+        num_tiles = num_loads + 1  # loads + 1 store
+
+        # Generate candidates: all combinations of candidate sizes per dim
+        # For 3D, also include non-square tiles (e.g., 4x4x32, 8x8x16)
+        candidates: list[tuple[int, ...]] = []
+        for combo in iterproduct(self.candidate_sizes, repeat=ndim):
+            candidates.append(combo)
 
         best_tile: tuple[int, ...] | None = None
         best_overhead: float = float("inf")
 
-        for ts in self.candidate_sizes:
-            tile = (ts,) * ndim
-
-            # Shared memory: input tile (tile + 2*halo per dim) + output tile
+        for tile in candidates:
+            # Shared memory: each TMA load/store needs its own tile in smem
+            # Load tiles are (tile + 2*halo) sized, store tile is (tile) sized
             expanded = tuple(t + 2 * h for t, h in zip(tile, halo))
             prod_expanded = math.prod(expanded)
             prod_tile = math.prod(tile)
 
-            smem_usage = (prod_expanded + prod_tile) * self.dtype_bytes * num_arrays
+            # Total shared mem: num_loads * expanded_tile + 1 * output_tile
+            smem_usage = (num_loads * prod_expanded + prod_tile) * self.dtype_bytes
 
             if smem_usage > self.shared_mem_bytes:
                 continue
@@ -81,9 +94,10 @@ class TilingPass(ModulePass):
                 best_overhead = overhead
                 best_tile = tile
 
-        # Fallback: (32,) * ndim
+        # Fallback per ndim
         if best_tile is None:
-            best_tile = (32,) * ndim
+            fallback = {1: (32,), 2: (16, 16), 3: (8, 8, 8)}
+            best_tile = fallback.get(ndim, (8,) * ndim)
             loc = getattr(apply_op, "location", None)
             loc_prefix = ""
             if isinstance(loc, FileLineColLoc):
