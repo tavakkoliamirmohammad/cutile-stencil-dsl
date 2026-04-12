@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from xdsl.context import Context
-from xdsl.dialects.builtin import ArrayAttr, IntAttr, ModuleOp, StringAttr
+from xdsl.dialects.builtin import ArrayAttr, FileLineColLoc, IntAttr, ModuleOp, StringAttr
 from xdsl.dialects.stencil import ApplyOp
 from xdsl.passes import ModulePass
 
@@ -84,6 +84,17 @@ class TilingPass(ModulePass):
         # Fallback: (32,) * ndim
         if best_tile is None:
             best_tile = (32,) * ndim
+            loc = getattr(apply_op, "location", None)
+            loc_prefix = ""
+            if isinstance(loc, FileLineColLoc):
+                loc_prefix = f"{loc.filename.data}:{loc.line.data} -- "
+            import warnings
+            warnings.warn(
+                f"{loc_prefix}stencil-tiling: no candidate tile size fits in "
+                f"shared memory ({self.shared_mem_bytes} B); "
+                f"falling back to {best_tile}",
+                stacklevel=2,
+            )
 
         apply_op.attributes["tile_sizes"] = ArrayAttr(
             [IntAttr(s) for s in best_tile]

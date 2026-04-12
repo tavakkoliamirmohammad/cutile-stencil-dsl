@@ -16,6 +16,7 @@ from xdsl.dialects import arith
 from xdsl.dialects.builtin import (
     ArrayAttr,
     DictionaryAttr,
+    FileLineColLoc,
     FloatAttr,
     IntAttr,
     ModuleOp,
@@ -134,14 +135,14 @@ def _collect_accesses(
     node: ast.expr,
     array_params: list[str],
     index_vars: list[str],
-) -> list[tuple[str, list[int]]]:
-    """Recursively collect all array accesses (array_name, offsets) from an expression."""
-    results: list[tuple[str, list[int]]] = []
+) -> list[tuple[str, list[int], ast.expr | None]]:
+    """Recursively collect all array accesses (array_name, offsets, ast_node) from an expression."""
+    results: list[tuple[str, list[int], ast.expr | None]] = []
 
     if isinstance(node, ast.Subscript):
         if isinstance(node.value, ast.Name) and node.value.id in array_params:
             offsets = _resolve_offset(node.slice, index_vars)
-            results.append((node.value.id, offsets))
+            results.append((node.value.id, offsets, node))
             return results
 
     # Recurse into child nodes
@@ -153,7 +154,7 @@ def _collect_accesses(
 
 
 def _infer_ndim_order(
-    accesses: list[tuple[str, list[int]]],
+    accesses: list[tuple[str, list[int], ...] | tuple[str, list[int]]],
 ) -> tuple[int, int]:
     """Infer ndim and order from collected accesses."""
     if not accesses:
@@ -161,7 +162,8 @@ def _infer_ndim_order(
 
     ndim = len(accesses[0][1])
     max_offset = 0
-    for _, offsets in accesses:
+    for item in accesses:
+        offsets = item[1]
         if len(offsets) != ndim:
             raise _ParseError(
                 f"Inconsistent dimensionality: expected {ndim}, "
@@ -191,17 +193,41 @@ class _ExprBuilder:
         float_type,
         access_map: dict[tuple[str, tuple[int, ...]], SSAValue],
         constant_map: dict[str, float],
+        source_file: str | None = None,
+        source_line_offset: int = 0,
     ):
         self.block = block
         self.float_type = float_type
         self.access_map = access_map
         self.constant_map = constant_map
         self._const_cache: dict[float, SSAValue] = {}
+        self._source_file = source_file
+        self._source_line_offset = source_line_offset
 
-    def _emit_const(self, value: float) -> SSAValue:
+    def _make_loc(self, node: ast.expr) -> FileLineColLoc | None:
+        """Create a FileLineColLoc from an AST node if source info is available."""
+        if self._source_file is None:
+            return None
+        line = getattr(node, "lineno", 0) + self._source_line_offset
+        col = getattr(node, "col_offset", 0)
+        return FileLineColLoc(
+            StringAttr(self._source_file),
+            IntAttr(line),
+            IntAttr(col),
+        )
+
+    def _attach_loc(self, op, node: ast.expr) -> None:
+        """Attach source location to an IR op if available."""
+        loc = self._make_loc(node)
+        if loc is not None:
+            op.location = loc
+
+    def _emit_const(self, value: float, node: ast.expr | None = None) -> SSAValue:
         if value in self._const_cache:
             return self._const_cache[value]
         op = arith.ConstantOp(FloatAttr(value, self.float_type))
+        if node is not None:
+            self._attach_loc(op, node)
         self.block.add_op(op)
         self._const_cache[value] = op.result
         return op.result
@@ -239,6 +265,7 @@ class _ExprBuilder:
                 f"Unsupported binary operator: {type(node.op).__name__}"
             )
         op = op_cls(left, right)
+        self._attach_loc(op, node)
         self.block.add_op(op)
         return op.result
 
@@ -246,6 +273,7 @@ class _ExprBuilder:
         if isinstance(node.op, ast.USub):
             operand = self.build(node.operand)
             op = arith.NegfOp(operand)
+            self._attach_loc(op, node)
             self.block.add_op(op)
             return op.result
         raise _ParseError(
@@ -254,7 +282,7 @@ class _ExprBuilder:
 
     def _build_constant(self, node: ast.Constant) -> SSAValue:
         if isinstance(node.value, (int, float)):
-            return self._emit_const(float(node.value))
+            return self._emit_const(float(node.value), node)
         raise _ParseError(f"Unsupported constant type: {type(node.value)}")
 
     def _build_access(self, node: ast.Subscript) -> SSAValue:
@@ -279,7 +307,7 @@ class _ExprBuilder:
         """Handle a bare name reference -- must be a closure constant."""
         name = node.id
         if name in self.constant_map:
-            return self._emit_const(self.constant_map[name])
+            return self._emit_const(self.constant_map[name], node)
         raise _ParseError(
             f"Unknown variable '{name}'. Not an array parameter or "
             f"known constant. If it is a closure variable, pass it via "
@@ -344,6 +372,21 @@ def parse_stencil(
     # ------------------------------------------------------------------
     source = textwrap.dedent(inspect.getsource(fn))
     tree = ast.parse(source)
+
+    # Extract source file and starting line number for diagnostics.
+    # The AST line numbers are relative to the parsed source snippet;
+    # source_line_offset adjusts them to absolute file positions.
+    source_file: str | None = None
+    source_line_offset: int = 0
+    try:
+        source_file = inspect.getfile(fn)
+        _, start_lineno = inspect.getsourcelines(fn)
+        # AST lineno is 1-based within the snippet; the snippet starts at
+        # start_lineno in the file.  offset = start_lineno - 1 so that
+        # AST line 1 maps to start_lineno.
+        source_line_offset = start_lineno - 1
+    except (OSError, TypeError):
+        pass  # source info unavailable (e.g., python -c)
 
     # Find the function definition (skip decorators)
     func_def: ast.FunctionDef | None = None
@@ -495,7 +538,7 @@ def parse_stencil(
 
     # De-duplicate accesses: (array_name, (offset_tuple)) -> AccessOp result
     unique_accesses: dict[tuple[str, tuple[int, ...]], SSAValue] = {}
-    for array_name, offsets in all_accesses:
+    for array_name, offsets, ast_node in all_accesses:
         key = (array_name, tuple(offsets))
         if key in unique_accesses:
             continue
@@ -506,11 +549,24 @@ def parse_stencil(
             float_type,
             index_names=index_vars,
         )
+        # Attach source location to AccessOp if available
+        if source_file is not None and ast_node is not None:
+            line = getattr(ast_node, "lineno", 0) + source_line_offset
+            col = getattr(ast_node, "col_offset", 0)
+            acc_op.location = FileLineColLoc(
+                StringAttr(source_file),
+                IntAttr(line),
+                IntAttr(col),
+            )
         func_block.add_op(acc_op)
         unique_accesses[key] = acc_op.res
 
     # Build arithmetic expression from the return value
-    builder = _ExprBuilder(func_block, float_type, unique_accesses, all_constants)
+    builder = _ExprBuilder(
+        func_block, float_type, unique_accesses, all_constants,
+        source_file=source_file,
+        source_line_offset=source_line_offset,
+    )
     builder._index_vars = index_vars  # needed by _build_access
     result_val = builder.build(return_expr)
 
@@ -545,6 +601,16 @@ def parse_stencil(
         boundary=boundary_attr,
         constants=constants_attr if all_constants else None,
     )
+
+    # Attach source location to FuncOp
+    if source_file is not None:
+        func_line = getattr(func_def, "lineno", 0) + source_line_offset
+        func_col = getattr(func_def, "col_offset", 0)
+        func_op.location = FileLineColLoc(
+            StringAttr(source_file),
+            IntAttr(func_line),
+            IntAttr(func_col),
+        )
 
     # Wrap in ModuleOp
     module = ModuleOp([func_op])

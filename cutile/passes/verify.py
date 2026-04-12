@@ -12,9 +12,19 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from xdsl.context import Context
-from xdsl.dialects.builtin import ModuleOp
+from xdsl.dialects.builtin import FileLineColLoc, ModuleOp
 from xdsl.dialects.stencil import ApplyOp
 from xdsl.passes import ModulePass
+
+
+def _format_diagnostic(op, message: str) -> str:
+    """Prefix *message* with source location info from *op* if available."""
+    loc = getattr(op, "location", None)
+    if isinstance(loc, FileLineColLoc):
+        filename = loc.filename.data
+        line = loc.line.data
+        return f"{filename}:{line} -- {message}"
+    return message
 
 
 @dataclass(frozen=True)
@@ -50,16 +60,22 @@ class VerifyPass(ModulePass):
             for idx, ts in enumerate(tile_attr):
                 if not self._is_power_of_2(ts.data):
                     raise ValueError(
-                        f"verify-ir: tile_sizes[{idx}] = {ts.data} "
-                        f"is not a power of 2 (cuTile constraint)"
+                        _format_diagnostic(
+                            apply_op,
+                            f"verify-ir: tile_sizes[{idx}] = {ts.data} "
+                            f"is not a power of 2 (cuTile constraint)",
+                        )
                     )
 
             # --- halo_widths must exist when tile_sizes is set ---
             halo_attr = attrs.get("halo_widths")
             if halo_attr is None:
                 raise ValueError(
-                    "verify-ir: tile_sizes is set but halo_widths is missing "
-                    "(AnalysisPass must run before TilingPass)"
+                    _format_diagnostic(
+                        apply_op,
+                        "verify-ir: tile_sizes is set but halo_widths is missing "
+                        "(AnalysisPass must run before TilingPass)",
+                    )
                 )
 
         # --- temporal_steps >= 1 ---
@@ -67,8 +83,11 @@ class VerifyPass(ModulePass):
         if temporal_attr is not None:
             if temporal_attr.data < 1:
                 raise ValueError(
-                    f"verify-ir: temporal_steps = {temporal_attr.data} "
-                    f"must be >= 1"
+                    _format_diagnostic(
+                        apply_op,
+                        f"verify-ir: temporal_steps = {temporal_attr.data} "
+                        f"must be >= 1",
+                    )
                 )
 
         # --- num_gpus >= 1 if decomposition is set ---
@@ -76,6 +95,9 @@ class VerifyPass(ModulePass):
         if num_gpus_attr is not None:
             if num_gpus_attr.data < 1:
                 raise ValueError(
-                    f"verify-ir: num_gpus = {num_gpus_attr.data} "
-                    f"must be >= 1"
+                    _format_diagnostic(
+                        apply_op,
+                        f"verify-ir: num_gpus = {num_gpus_attr.data} "
+                        f"must be >= 1",
+                    )
                 )

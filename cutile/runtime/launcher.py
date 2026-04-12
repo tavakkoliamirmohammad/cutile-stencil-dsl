@@ -188,6 +188,11 @@ def compile(
     pipeline: Pipeline | None = None,
     temporal_blocking: bool = True,
     autotune: bool = False,
+    num_gpus: int = 1,
+    split_axis: int = 0,
+    overlap: bool = True,
+    layout: str | None = None,
+    brick_size: int = 32,
 ) -> CompileResult:
     """Compile a ``@stencil``-decorated function through the pipeline.
 
@@ -205,6 +210,20 @@ def compile(
         Enable temporal blocking (default ``True``).
     autotune
         Enable autotuning (default ``False``).
+    num_gpus
+        Number of GPUs for multi-GPU code generation (default ``1``).
+        When ``> 1``, generates domain decomposition + halo exchange.
+    split_axis
+        Axis along which to split the domain for multi-GPU (default ``0``).
+    overlap
+        Whether to overlap compute and communication in multi-GPU mode
+        (default ``True``).
+    layout
+        Memory layout for the kernel.  ``None`` or ``"flat"`` for standard
+        row-major layout; ``"bricked"`` for bricked memory layout with
+        flat-to-brick conversion.
+    brick_size
+        Brick side length when ``layout="bricked"`` (default ``32``).
 
     Returns
     -------
@@ -275,6 +294,11 @@ def compile(
     if not temporal_blocking:
         temporal_steps = 1
 
+    # For multi-GPU, each GPU runs a single step per iteration;
+    # temporal looping is handled by the multi-GPU launcher itself.
+    if num_gpus > 1:
+        temporal_steps = 1
+
     # -------------------------------------------------------------- #
     # 3. Optionally autotune
     # -------------------------------------------------------------- #
@@ -287,20 +311,47 @@ def compile(
     # -------------------------------------------------------------- #
     # 4. Lower to Python source using the *original* Dialect 1 IR
     # -------------------------------------------------------------- #
-    from cutile.lowering.stencil_to_cutile import lower_stencil_to_python
-
     boundary_spec = None
     if hasattr(stencil_fn, "_boundary") and stencil_fn._boundary is not None:
         boundary_spec = stencil_fn._boundary
 
-    code = lower_stencil_to_python(
-        ir.clone(),
-        domain=domain,
-        tile_sizes=tile_sizes,
-        halo_widths=halo_widths,
-        temporal_steps=temporal_steps,
-        boundary_spec=boundary_spec,
-    )
+    if num_gpus > 1:
+        # Multi-GPU lowering
+        from cutile.lowering.multigpu_emitter import lower_stencil_to_multigpu_python
+
+        code = lower_stencil_to_multigpu_python(
+            ir.clone(),
+            num_gpus=num_gpus,
+            split_axis=split_axis,
+            tile_sizes=tile_sizes,
+            halo_widths=halo_widths,
+            temporal_steps=temporal_steps,
+            overlap=overlap,
+        )
+    elif layout == "bricked":
+        # Bricked layout lowering
+        from cutile.lowering.multigpu_emitter import lower_stencil_to_bricked_python
+
+        code = lower_stencil_to_bricked_python(
+            ir.clone(),
+            tile_sizes=tile_sizes,
+            halo_widths=halo_widths,
+            temporal_steps=temporal_steps,
+            brick_size=brick_size,
+            boundary_spec=boundary_spec,
+        )
+    else:
+        # Standard single-GPU lowering
+        from cutile.lowering.stencil_to_cutile import lower_stencil_to_python
+
+        code = lower_stencil_to_python(
+            ir.clone(),
+            domain=domain,
+            tile_sizes=tile_sizes,
+            halo_widths=halo_widths,
+            temporal_steps=temporal_steps,
+            boundary_spec=boundary_spec,
+        )
 
     return CompileResult(
         name=name,
@@ -311,4 +362,104 @@ def compile(
         temporal_steps=temporal_steps,
         analysis=analysis,
         _ref_fn=stencil_fn._fn,
+    )
+
+
+# ---------------------------------------------------------------------- #
+# compile_fused()
+# ---------------------------------------------------------------------- #
+
+
+def compile_fused(
+    stencil_fns: list,
+    domain: tuple[int, ...] | None = None,
+    hw=None,
+    tile_sizes: tuple[int, ...] | None = None,
+    halo_widths: tuple[int, ...] | None = None,
+    temporal_steps: int = 1,
+) -> CompileResult:
+    """Compile multiple stencils into a single fused kernel.
+
+    Multi-field stencils that read overlapping inputs are compiled into one
+    kernel that loads shared data once and computes all outputs.
+
+    Parameters
+    ----------
+    stencil_fns : list
+        List of ``@stencil``-decorated functions (must have ``_ir`` attributes).
+    domain : tuple[int, ...] | None
+        Optional domain shape.
+    hw
+        Optional hardware spec.
+    tile_sizes : tuple[int, ...] | None
+        Tile sizes per dimension.
+    halo_widths : tuple[int, ...] | None
+        Halo widths per dimension.
+    temporal_steps : int
+        Number of temporal blocking steps (1 = no temporal blocking).
+
+    Returns
+    -------
+    CompileResult
+    """
+    if not stencil_fns:
+        raise ValueError("At least one stencil function is required")
+
+    from cutile.lowering.fusion_emitter import lower_fused_stencils_to_python
+
+    modules = [fn._ir for fn in stencil_fns]
+    names = [fn._fn.__name__ for fn in stencil_fns]
+
+    # Determine halo widths from pipeline analysis if not provided
+    if halo_widths is None or tile_sizes is None:
+        analysis_clone = modules[0].clone()
+        first_fn = stencil_fns[0]
+        shared_mem = 49152
+        dtype_bytes = 4 if getattr(first_fn, "_dtype", "float64") in (
+            "float32", "fp32"
+        ) else 8
+        if hw is not None:
+            shared_mem = hw.shared_mem_bytes
+            dtype_bytes = hw.dtype_bytes
+        p = Pipeline.single_gpu(
+            shared_mem_bytes=shared_mem,
+            dtype_bytes=dtype_bytes,
+            max_temporal_steps=1,
+        )
+        p.run(analysis_clone)
+        for op in analysis_clone.walk():
+            if isinstance(op, ApplyOp):
+                if halo_widths is None and "halo_widths" in op.attributes:
+                    halo_widths = tuple(
+                        a.data for a in op.attributes["halo_widths"]
+                    )
+                if tile_sizes is None and "tile_sizes" in op.attributes:
+                    tile_sizes = tuple(
+                        a.data for a in op.attributes["tile_sizes"]
+                    )
+                break
+
+    code = lower_fused_stencils_to_python(
+        modules,
+        tile_sizes=tile_sizes,
+        halo_widths=halo_widths,
+        temporal_steps=temporal_steps,
+    )
+
+    # Build a fused name
+    if len(names) <= 3:
+        fused_name = "_".join(names) + "_fused"
+    else:
+        fused_name = f"{names[0]}_and_{len(names) - 1}_others_fused"
+
+    ndim = stencil_fns[0]._ndim or len(halo_widths or (1,))
+
+    return CompileResult(
+        name=fused_name,
+        code=code,
+        ndim=ndim,
+        halo_widths=halo_widths or (1,) * ndim,
+        tile_sizes=tile_sizes or (64,) * ndim,
+        temporal_steps=temporal_steps,
+        analysis={},
     )
