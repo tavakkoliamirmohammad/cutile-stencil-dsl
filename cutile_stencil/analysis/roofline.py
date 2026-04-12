@@ -28,6 +28,11 @@ class _FlopCounter(ast.NodeVisitor):
         self.pows = 0
         self.mods = 0
 
+    def visit_Subscript(self, node: ast.Subscript):
+        # Visit the array expression (e.g. ``u``) but skip the slice
+        # so that index arithmetic like ``i - 1`` is not counted as FLOPs.
+        self.visit(node.value)
+
     def visit_BinOp(self, node: ast.BinOp):
         if isinstance(node.op, (ast.Add, ast.Sub)):
             self.adds += 1

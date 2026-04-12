@@ -242,8 +242,8 @@ class TestFlopCounting:
         assert spec.order == 2
         extract_footprint(spec)
         result = roofline_analysis(spec, hw)
-        # Should count: 1 pow + 1 add = 2 flops minimum
-        assert result.flops_per_point >= 2
+        # 1 pow (** 2) + 1 add (+) = 2 FLOPs; index arithmetic excluded
+        assert result.flops_per_point == 2
 
 
 class TestTemporalBlockingDimensionIndependentHalos:
@@ -290,9 +290,10 @@ class TestRooflineFlopScope:
         spec.halo_widths = compute_halo(spec.accesses, 1)
 
         result = roofline_analysis(spec, hw)
-        # Body has 3 FLOPs: u[i-1] (1 Sub) + u[i+1] (1 Sub) = 2 Subs + 1 Add
-        # If decorator arithmetic leaked, we'd see 4 (extra Mul from 2*3)
-        assert result.flops_per_point == 3, (
-            f"Expected 3 FLOPs (2 Subs + 1 Add in body), got {result.flops_per_point}. "
-            f"Decorator arithmetic may be leaking into FLOP count."
+        # Body has 1 real FLOP: the + between two array loads.
+        # Index arithmetic (i-1, i+1) is address computation, not counted.
+        # Decorator arithmetic (2*3) must also not leak in.
+        assert result.flops_per_point == 1, (
+            f"Expected 1 FLOP (1 Add between loads), got {result.flops_per_point}. "
+            f"Index or decorator arithmetic may be leaking into FLOP count."
         )
