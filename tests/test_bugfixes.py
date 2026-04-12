@@ -208,11 +208,13 @@ class TestFlopCounting:
         assert counter.total == 3
 
     def test_pow_counted(self):
-        """Exponentiation is counted as a FLOP."""
+        """Integer pow expands to n-1 multiplications."""
         counter = self._count_flops("x ** 2 + y ** 3")
-        assert counter.pows == 2
+        # x**2 = 1 mul, y**3 = 2 muls, + = 1 add
+        assert counter.muls == 3
+        assert counter.pows == 0
         assert counter.adds == 1
-        assert counter.total == 3
+        assert counter.total == 4
 
     def test_mod_counted(self):
         """Modulo is counted as a FLOP."""
@@ -242,7 +244,7 @@ class TestFlopCounting:
         assert spec.order == 2
         extract_footprint(spec)
         result = roofline_analysis(spec, hw)
-        # 1 pow (** 2) + 1 add (+) = 2 FLOPs; index arithmetic excluded
+        # **2 = 1 mul, + = 1 add = 2 FLOPs; index arithmetic excluded
         assert result.flops_per_point == 2
 
 

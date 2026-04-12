@@ -41,7 +41,11 @@ class _FlopCounter(ast.NodeVisitor):
         elif isinstance(node.op, (ast.Div, ast.FloorDiv)):
             self.divs += 1
         elif isinstance(node.op, ast.Pow):
-            self.pows += 1
+            # x ** n with integer n compiles to n-1 multiplications
+            if isinstance(node.right, ast.Constant) and isinstance(node.right.value, int):
+                self.muls += max(node.right.value - 1, 0)
+            else:
+                self.pows += 1
         elif isinstance(node.op, ast.Mod):
             self.mods += 1
         self.generic_visit(node)
