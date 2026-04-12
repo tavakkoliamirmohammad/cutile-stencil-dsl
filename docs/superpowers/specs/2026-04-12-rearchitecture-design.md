@@ -45,49 +45,81 @@ Layer 4: RUNTIME           Kernel launching, communication, autotuning
 
 Each layer depends only on the one above it. Passes don't know about cuTile. The emitter doesn't know about stencil semantics. The frontend doesn't know about tiling.
 
-### End-to-End Data Flow
+### End-to-End Data Flow (Three-Dialect Stack)
+
+The system uses three dialect levels, each with a simple, well-defined conversion:
 
 ```
 User writes:
-    @stencil(ndim=2, order=2)
+    @stencil(ndim=2, order=2, boundary=BoundarySpec.periodic())
     def heat(u, i, j):
         return 0.25 * (u[i-1,j] + u[i+1,j] + u[i,j-1] + u[i,j+1])
 
-         | Frontend (Python AST -> xDSL IR)
+         | Frontend: trivial 1:1 Python AST -> our dialect
 
-xDSL stencil dialect:
-    stencil.apply(%u) {
-        %left  = stencil.access %u [-1, 0]
-        %right = stencil.access %u [+1, 0]
-        %up    = stencil.access %u [0, -1]
-        %down  = stencil.access %u [0, +1]
-        %sum   = arith.addf %left, %right, %up, %down
-        %out   = arith.mulf %sum, 0.25
-        stencil.return %out
+Dialect 1 - cuTile Stencil Dialect (our high-level dialect):
+    cutile_stencil.func @heat(
+        %u: field<?x?xf64>,
+        ndim=2, order=2,
+        boundary=periodic,
+        constants={}) {
+        %left  = cutile_stencil.access %u [i-1, j]
+        %right = cutile_stencil.access %u [i+1, j]
+        %up    = cutile_stencil.access %u [i, j-1]
+        %down  = cutile_stencil.access %u [i, j+1]
+        cutile_stencil.compute {
+            return 0.25 * (%left + %right + %up + %down)
+        }
     }
+    - Directly mirrors Python syntax (named params, boundary spec, closure constants)
+    - Symbolic shapes (? dimensions) supported by default
+
+         | xDSL pass: normalize our dialect -> standard xDSL stencil dialect
+
+Dialect 2 - xDSL Stencil Dialect (standard MLIR stencil):
+    builtin.module {
+        func.func @heat(%u: !stencil.field<?x?xf64>)
+                        -> !stencil.field<?x?xf64> {
+            %out = stencil.apply(%u_val = %u) {
+                %left  = stencil.access %u_val [-1, 0] : f64
+                %right = stencil.access %u_val [+1, 0] : f64
+                %up    = stencil.access %u_val [0, -1] : f64
+                %down  = stencil.access %u_val [0, +1] : f64
+                %sum   = arith.addf %left, %right : f64
+                %sum2  = arith.addf %sum, %up : f64
+                %sum3  = arith.addf %sum2, %down : f64
+                %coeff = arith.constant 0.25 : f64
+                %res   = arith.mulf %sum3, %coeff : f64
+                stencil.return %res : f64
+            }
+            return %out
+        }
+    }
+    - Normalized, canonical SSA form
+    - ALL optimization passes operate on this dialect
 
          | Analysis passes (footprint, halo, roofline)
          | Optimization passes (tiling, temporal blocking, bricked layout)
          | Multi-GPU passes (decomposition, halo exchange insertion)
 
-         | Lowering pass (stencil -> cuTile dialect)
+         | xDSL pass: lower to cuTile target dialect
 
-cuTile dialect (device IR):
+Dialect 3 - cuTile Target Dialect (device + host IR):
     cutile.kernel { tile_shape=[TX,TY], halo=[HX,HY] }
         cutile.slice(axis=0, start=..., stop=...)
         cutile.load(...)
         cutile.store(...)
-
-cuTile dialect (host IR):
-    cutile.alloc_buffers(...)
-    cutile.stream()
-    host.for_loop(T) {
-        cutile.launch(kernel, grid, args)
-        boundary.apply(...)
-        cutile.swap_buffers(...)
+    cutile.host_program {
+        cutile.alloc_buffers(...)
+        cutile.stream()
+        host.for_loop(T) {
+            cutile.launch(kernel, grid, args)
+            boundary.apply(...)
+            cutile.swap_buffers(...)
+        }
     }
 
-         | Emission (cuTile dialect -> Python source string)
+         | Emission: walk cuTile target ops -> Python source string
 
     @ct.kernel
     def heat_kernel(u_in, u_out, TX, TY, HX, HY, nx, ny):
@@ -97,9 +129,16 @@ cuTile dialect (host IR):
         ct.store(out_tile, result)
 
     def launch_heat(u_in, u_out):
-        stream = cp.cuda.get_current_stream()
+        nx, ny = u_in.shape[0] - 2*HX, u_in.shape[1] - 2*HY
+        grid = (ct.cdiv(nx, TX), ct.cdiv(ny, TY))
         ...
 ```
+
+Each conversion step is simple:
+- **Python -> Dialect 1:** Trivial, almost 1:1 mapping from Python AST to our dialect ops
+- **Dialect 1 -> Dialect 2:** xDSL pass that normalizes to canonical stencil form (SSA, offset tuples, arith ops)
+- **Dialect 2 -> Dialect 3:** xDSL lowering pass after all optimizations are applied
+- **Dialect 3 -> Python source:** Mechanical string emission from structured IR ops
 
 ### Module Structure
 
@@ -110,10 +149,10 @@ cutile/
 |   |-- parser.py           # Python AST -> xDSL stencil dialect operations
 |   +-- types.py            # BoundarySpec, HardwareSpec, GPU presets, configs
 |
-|-- dialects/               # xDSL dialect definitions
-|   |-- stencil_ext/        # Additional ops/attributes extending (not forking) xDSL's stencil dialect
-|   |-- cutile_dialect/     # Custom cuTile target dialect (kernel, slice, load, store, launch)
-|   +-- comm/               # Communication dialect (halo send/recv, barrier, sync)
+|-- dialects/               # xDSL dialect definitions (three-dialect stack)
+|   |-- cutile_stencil/     # Dialect 1: our high-level stencil dialect (mirrors Python syntax)
+|   |-- cutile_target/      # Dialect 3: cuTile target dialect (kernel, slice, load, store, launch, host program)
+|   +-- comm/               # Communication ops dialect (halo send/recv, barrier, sync)
 |
 |-- passes/                 # Layer 2: IR transformations
 |   |-- analysis/           # Read-only passes
@@ -127,8 +166,9 @@ cutile/
 |   +-- halo.py             # Halo exchange insertion (abstract comm ops)
 |
 |-- lowering/               # Layer 3: IR -> code
-|   |-- stencil_to_cutile.py  # Stencil dialect -> cuTile dialect (device + host IR)
-|   +-- emitter.py            # cuTile dialect -> Python source text
+|   |-- normalize.py          # Dialect 1 (cutile_stencil) -> Dialect 2 (xDSL stencil)
+|   |-- stencil_to_cutile.py  # Dialect 2 (xDSL stencil) -> Dialect 3 (cutile_target, device + host IR)
+|   +-- emitter.py            # Dialect 3 (cutile_target) -> Python source text
 |
 |-- runtime/                # Layer 4: Execution
 |   |-- launcher.py         # Compile + launch generated kernels (importlib, CuPy)
@@ -157,34 +197,63 @@ def heat(u, i, j):
     return 0.25 * (u[i-1,j] + u[i+1,j] + u[i,j-1] + u[i,j+1])
 ```
 
-The decorator performs three steps:
+The decorator performs two steps:
 
-1. **Parse** the function's AST to extract array accesses and the computation expression.
-2. **Build** an xDSL `stencil.apply` operation with proper `stencil.access` ops for each array read and `arith.*` ops for the computation.
-3. **Attach** metadata as IR attributes: boundary spec, closure constants (dt, dx, etc.), dtype.
+1. **Parse** the function's AST and build our **cuTile Stencil Dialect** (Dialect 1) IR. This is a trivial, almost 1:1 mapping from Python syntax to IR ops. Named parameters, boundary specs, closure constants, and array accesses all have direct Dialect 1 counterparts.
+2. **Preserve** the raw Python function alongside the IR for CPU reference execution in tests.
+
+The decorator does NOT build xDSL's stencil dialect directly. The conversion from Dialect 1 to Dialect 2 (xDSL stencil) is a separate xDSL pass (`normalize.py`), keeping each step simple.
 
 ### Auto-inference
 
-The current auto-inference of `ndim` (from subscript dimensions) and `order` (from max offset magnitudes) is retained. The parser walks the AST once to determine both, extract all offset patterns, capture closure constants, and build the IR.
+The current auto-inference of `ndim` (from subscript dimensions) and `order` (from max offset magnitudes) is retained. The parser walks the AST once to determine both, extract all offset patterns, capture closure constants, and build the Dialect 1 IR.
+
+### Symbolic Shapes
+
+The frontend produces IR with **symbolic (dynamic) dimensions** by default:
+
+```
+cutile_stencil.func @heat(%u: field<?x?xf64>, ...)
+```
+
+Domain sizes are not baked into the IR. Tile sizes and halo widths are compile-time constants determined by the stencil shape and hardware constraints. Grid dimensions are computed at runtime from the actual array shape. This means a kernel compiled once can run on any domain size.
+
+When a concrete domain is provided to `compile(heat, domain=(256, 256))`, it is used for autotuning and validation but does not change the generated kernel code.
 
 ### Immutability
 
 The decorator produces an **immutable xDSL module**. Once built, the IR is the source of truth. There is no mutable `StencilSpec` being modified in multiple places. Halo widths, tile sizes, and temporal steps are computed by passes and stored as attributes on IR operations.
 
-The raw Python function is preserved alongside the IR for CPU reference execution in tests, but it is never used for code generation.
-
 ### Multi-input stencils
 
-For stencils with multiple input arrays (Gray-Scott with `u` and `v`, shallow water with `h`, `hu`, `hv`), each array becomes a separate operand to `stencil.apply`. xDSL's stencil dialect natively supports multiple input fields.
+For stencils with multiple input arrays (Gray-Scott with `u` and `v`, shallow water with `h`, `hu`, `hv`), each array becomes a separate field operand in Dialect 1. The normalization pass maps these to multiple operands in `stencil.apply`. xDSL's stencil dialect natively supports multiple input fields.
 
-### xDSL IR Example
+### Dialect 1 IR Example
 
-For the 2D heat stencil, the frontend produces:
+For the 2D heat stencil, the frontend produces our high-level dialect:
+
+```
+cutile_stencil.func @heat(
+    %u: field<?x?xf64>,
+    ndim=2, order=2,
+    boundary=periodic,
+    constants={}) {
+    %left  = cutile_stencil.access %u [i-1, j]
+    %right = cutile_stencil.access %u [i+1, j]
+    %up    = cutile_stencil.access %u [i, j-1]
+    %down  = cutile_stencil.access %u [i, j+1]
+    cutile_stencil.compute {
+        return 0.25 * (%left + %right + %up + %down)
+    }
+}
+```
+
+After the normalization pass (`normalize.py`), this becomes standard xDSL stencil dialect:
 
 ```
 builtin.module {
-    func.func @heat(%u: !stencil.field<[-1,257]x[-1,257]xf64>)
-                    -> !stencil.field<[0,256]x[0,256]xf64> {
+    func.func @heat(%u: !stencil.field<?x?xf64>)
+                    -> !stencil.field<?x?xf64> {
         %out = stencil.apply(%u_val = %u) {
             %left  = stencil.access %u_val [-1, 0] : f64
             %right = stencil.access %u_val [+1, 0] : f64
@@ -196,7 +265,7 @@ builtin.module {
             %coeff = arith.constant 0.25 : f64
             %res   = arith.mulf %sum3, %coeff : f64
             stencil.return %res : f64
-        } : !stencil.field<[0,256]x[0,256]xf64>
+        }
         return %out
     }
 }
@@ -257,11 +326,21 @@ The key architectural win: passes compose without new code paths. Today, adding 
 
 ## Layer 3: Lowering
 
-Two stages: structural lowering (stencil dialect -> cuTile dialect) and emission (cuTile dialect -> Python source text).
+Three stages matching the three-dialect stack:
 
-### Stage 1: Stencil-to-cuTile Lowering
+### Stage 0: Normalization (Dialect 1 -> Dialect 2)
 
-An xDSL pass that converts high-level stencil operations into cuTile-specific operations, producing both device IR (the kernel) and host IR (the launcher):
+An xDSL pass (`normalize.py`) that converts our high-level cuTile Stencil Dialect into the standard xDSL stencil dialect. This pass:
+- Converts named index accesses (`[i-1, j]`) to offset tuples (`[-1, 0]`)
+- Decomposes `cutile_stencil.compute` expressions into `arith.*` SSA operations
+- Maps `cutile_stencil.func` metadata (boundary, constants) to IR attributes on `func.func`
+- Converts `cutile_stencil.access` to `stencil.access`
+
+This is a straightforward structural conversion. All semantic analysis and optimization happens after this step, on the standard xDSL stencil dialect.
+
+### Stage 1: Stencil-to-cuTile Lowering (Dialect 2 -> Dialect 3)
+
+An xDSL pass that converts optimized xDSL stencil operations into cuTile target dialect operations, producing both device IR (the kernel) and host IR (the launcher):
 
 **Device IR lowering:**
 
