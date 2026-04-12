@@ -941,7 +941,6 @@ class TestMultiGPUExecution:
 
 
 # =====================================================================
-<<<<<<< HEAD
 # Cartesian Decomposition Tests
 # =====================================================================
 
@@ -1492,3 +1491,4 @@ class TestMultiGPUP2PLauncher:
         if _NUM_GPUS < 4:
             pytest.skip("Need >= 4 GPUs")
         assert _run_p2p_launcher_1d(4, n_steps=10)
+
