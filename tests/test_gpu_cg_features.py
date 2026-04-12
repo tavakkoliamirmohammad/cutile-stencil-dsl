@@ -92,44 +92,78 @@ class TestConvergenceHistoryGPU:
     def test_history_code_valid(self):
         """CG with return_history should generate valid Python."""
         lap = _make_lap1d()
-        try:
-            code = generate_stencil_cg(lap._stencil_spec, domain=(256,), return_history=True)
-            ast.parse(code)
-            assert "ConvergenceHistory" in code
-        except TypeError:
-            pytest.skip("return_history parameter not available on this branch")
+        code = generate_stencil_cg(lap._stencil_spec, domain=(256,), return_history=True)
+        ast.parse(code)
+        assert "ConvergenceHistory" in code
 
-    def test_history_cg_runs_on_gpu(self):
-        """CG with history should run and return ConvergenceHistory."""
+
+@gpu_required
+class TestPreconditionedCGConvergence:
+    """Verify preconditioned CG converges and solves correctly."""
+
+    def test_preconditioned_fewer_iterations(self):
+        """Jacobi-preconditioned CG should converge in <= iterations vs plain CG."""
         lap = _make_lap1d()
-        try:
-            code = generate_stencil_cg(lap._stencil_spec, domain=(256,), return_history=True)
+        spec = lap._stencil_spec
+        domain = (128,)
+        halo = 1
+        N = domain[0] + 2 * halo
 
-            # Write to temp file and load
-            tmp = tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w")
-            tmp.write(code)
-            tmp.close()
+        # Generate both solvers
+        code_plain = generate_stencil_cg(spec, domain)
+        code_prec = generate_stencil_cg(spec, domain, preconditioned=True)
 
-            spec = importlib.util.spec_from_file_location("_cg", tmp.name)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
+        # Load plain CG
+        with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
+            f.write(code_plain)
+            plain_path = f.name
+        ms = importlib.util.spec_from_file_location("_cg_plain", plain_path)
+        mod_plain = importlib.util.module_from_spec(ms)
+        ms.loader.exec_module(mod_plain)
 
-            # The module should have a cg_solve function
-            if hasattr(mod, 'stencil_cg_solve'):
-                # Create test problem
-                N = 64
-                halo = 1
-                b = cp.random.randn(N + 2 * halo).astype(cp.float64)
-                b[:halo] = 0
-                b[-halo:] = 0
-                x = cp.zeros_like(b)
+        # Load preconditioned CG
+        with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
+            f.write(code_prec)
+            prec_path = f.name
+        ms2 = importlib.util.spec_from_file_location("_cg_prec", prec_path)
+        mod_prec = importlib.util.module_from_spec(ms2)
+        ms2.loader.exec_module(mod_prec)
 
-                # Try to run — may fail if module structure doesn't match expectations
-                # This is exploratory validation
-                print(f"CG with history module has: {[x for x in dir(mod) if not x.startswith('_')]}")
+        # Create test problem: b = A @ x_true
+        np.random.seed(42)
+        x_true = np.zeros(N, dtype=np.float64)
+        x_true[halo:-halo] = np.sin(np.linspace(0, np.pi, domain[0]))
+        b = cp.zeros(N, dtype=cp.float64)
+        x_gpu = cp.asarray(x_true)
+        launch = getattr(mod_plain, f"launch_{spec.name}")
+        launch(x_gpu, b)
+        cp.cuda.Device(0).synchronize()
 
-        except TypeError:
-            pytest.skip("return_history parameter not available on this branch")
-        except Exception as e:
-            print(f"History CG GPU validation: {e}")
-            pytest.skip(f"History CG run failed: {e}")
+        x0 = cp.zeros(N, dtype=cp.float64)
+
+        # Run plain CG
+        result_plain = mod_plain.stencil_cg_solve(b, x0, tol=1e-8, max_iter=500)
+        x_plain, iters_plain, res_plain = result_plain[0], result_plain[1], result_plain[2]
+
+        # Run preconditioned CG
+        result_prec = mod_prec.stencil_cg_solve(b, x0, tol=1e-8, max_iter=500)
+        x_prec, iters_prec, res_prec = result_prec[0], result_prec[1], result_prec[2]
+
+        # Both should converge
+        assert res_plain < 1e-6, f"Plain CG didn't converge: residual={res_plain:.2e}"
+        assert res_prec < 1e-6, f"Preconditioned CG didn't converge: residual={res_prec:.2e}"
+
+        # Both solutions should match the true solution
+        x_plain_np = cp.asnumpy(x_plain) if hasattr(x_plain, 'get') else x_plain
+        x_prec_np = cp.asnumpy(x_prec) if hasattr(x_prec, 'get') else x_prec
+        assert np.allclose(x_plain_np[halo:-halo], x_true[halo:-halo], atol=1e-4), (
+            "Plain CG solution doesn't match true solution"
+        )
+        assert np.allclose(x_prec_np[halo:-halo], x_true[halo:-halo], atol=1e-4), (
+            "Preconditioned CG solution doesn't match true solution"
+        )
+
+        # Preconditioned should converge in no more iterations than plain
+        assert iters_prec <= iters_plain, (
+            f"Preconditioned ({iters_prec} iters) should be <= plain ({iters_plain} iters)"
+        )
