@@ -196,3 +196,44 @@ class TestRestrictionKernelGeneration:
         # All other coarse cells should be 0.0
         assert abs(u_coarse[0, 0, 1]) < 1e-12
         assert abs(u_coarse[1, 0, 0]) < 1e-12
+
+
+class TestRestrictionConservation:
+    """Verify restriction operator conserves the integral (sum) of the field."""
+
+    def _test_conservation(self, ndim):
+        r = 2
+        n_coarse = 8
+        n_fine = n_coarse * r
+        np.random.seed(42)
+        u_fine = np.random.randn(*([n_fine] * ndim))
+
+        res_src = generate_restriction_kernel(ndim=ndim, refinement_factor=r)
+        ns = {}
+        exec(compile(ast.parse(res_src), "<res>", "exec"), ns)
+        restrict = ns[f"restriction_{ndim}d"]
+
+        u_coarse = np.zeros([n_coarse] * ndim)
+        restrict(u_fine, u_coarse)
+
+        # Restriction averages over r^ndim fine cells per coarse cell.
+        # Total sum should be: sum(u_coarse) * r^ndim == sum(u_fine)
+        fine_sum = np.sum(u_fine)
+        coarse_scaled_sum = np.sum(u_coarse) * (r ** ndim)
+        rel_err = abs(coarse_scaled_sum - fine_sum) / (abs(fine_sum) + 1e-15)
+        assert rel_err < 1e-12, (
+            f"{ndim}D restriction not conservative: "
+            f"fine_sum={fine_sum:.6f}, coarse_scaled={coarse_scaled_sum:.6f}, "
+            f"rel_err={rel_err:.2e}"
+        )
+
+    def test_1d_conservation(self):
+        self._test_conservation(1)
+
+    def test_2d_conservation(self):
+        self._test_conservation(2)
+
+    def test_3d_conservation(self):
+        self._test_conservation(3)
+
+
