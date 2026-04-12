@@ -193,6 +193,7 @@ def compile(
     overlap: bool = True,
     layout: str | None = None,
     brick_size: int = 32,
+    backend: str = "cutile",
 ) -> CompileResult:
     """Compile a ``@stencil``-decorated function through the pipeline.
 
@@ -315,6 +316,15 @@ def compile(
     if hasattr(stencil_fn, "_boundary") and stencil_fn._boundary is not None:
         boundary_spec = stencil_fn._boundary
 
+    # Select backend: "auto" picks raw_cuda for memory-bound, cutile for compute-bound
+    use_raw_cuda = False
+    if backend == "raw_cuda":
+        use_raw_cuda = True
+    elif backend == "auto" and num_gpus <= 1 and layout != "bricked":
+        bound = analysis.get("bound", "memory")
+        if bound == "memory":
+            use_raw_cuda = True
+
     if num_gpus > 1:
         # Multi-GPU lowering
         from cutile.lowering.multigpu_emitter import lower_stencil_to_multigpu_python
@@ -340,8 +350,17 @@ def compile(
             brick_size=brick_size,
             boundary_spec=boundary_spec,
         )
+    elif use_raw_cuda:
+        # Raw CUDA backend for memory-bound stencils (bypasses cuTile TMA)
+        from cutile.lowering.raw_cuda_emitter import lower_stencil_to_raw_cuda
+
+        code = lower_stencil_to_raw_cuda(
+            ir.clone(),
+            tile_sizes=tile_sizes,
+            halo_widths=halo_widths,
+        )
     else:
-        # Standard single-GPU lowering
+        # Standard cuTile lowering
         from cutile.lowering.stencil_to_cutile import lower_stencil_to_python
 
         code = lower_stencil_to_python(
