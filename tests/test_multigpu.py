@@ -834,6 +834,107 @@ class TestMultiGPUExecution:
 
     def test_3d_2_gpus(self):
         assert _run_multigpu_3d_stencil(2, n_steps=3)
+
+    def test_2d_halo_exchange_codegen(self):
+        """Use the generated exchange_halos function for 2D multi-GPU stencil."""
+        import numpy as np
+        import importlib.util
+        import tempfile
+        from cutile_stencil import compile as stencil_compile
+        from cutile_stencil.reference.stencil_ref import apply_stencil
+        from cutile_stencil.multigpu.halo_exchange import (
+            create_exchange_plan,
+            emit_halo_exchange_function,
+        )
+
+        n_gpus = 2
+        n_steps = 5
+        hx, hy = 1, 1
+        local_ny = 64
+        nx = 64
+
+        @stencil(ndim=2, order=2)
+        def lap_exch(u, i, j):
+            return 0.25 * (u[i-1,j] + u[i+1,j] + u[i,j-1] + u[i,j+1])
+
+        spec = lap_exch._stencil_spec
+
+        # Compile stencil kernel
+        result = stencil_compile(lap_exch, domain=(nx, local_ny))
+        with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
+            f.write(result.code)
+            kernel_path = f.name
+        mod_spec = importlib.util.spec_from_file_location("_kexch", kernel_path)
+        mod = importlib.util.module_from_spec(mod_spec)
+        mod_spec.loader.exec_module(mod)
+        launch = getattr(mod, f"launch_{spec.name}")
+
+        # Generate and load exchange functions for each rank
+        decomp = decompose(
+            domain=(nx, local_ny * n_gpus),
+            num_gpus=n_gpus,
+            halo_widths=(hx, hy),
+        )
+        exchange_mods = []
+        for rank in range(n_gpus):
+            local_shape = (nx + 2 * hx, local_ny + 2 * hy)
+            plan = create_exchange_plan(decomp, rank, local_shape)
+            code = emit_halo_exchange_function(plan)
+            with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
+                f.write("import cupy as cp\nimport numpy as np\n" + code)
+                exch_path = f.name
+            ms = importlib.util.spec_from_file_location(f"_exch{rank}", exch_path)
+            m = importlib.util.module_from_spec(ms)
+            ms.loader.exec_module(m)
+            exchange_mods.append(m)
+
+        # Setup
+        np.random.seed(99)
+        global_ny = local_ny * n_gpus
+        u_global = np.random.randn(nx + 2 * hx, global_ny + 2 * hy).astype(np.float64)
+
+        _enable_p2p(n_gpus)
+
+        u_gpu = []
+        out_gpu = []
+        for rank in range(n_gpus):
+            cp.cuda.Device(rank).use()
+            col_start = rank * local_ny
+            u_gpu.append(cp.asarray(u_global[:, col_start : col_start + local_ny + 2 * hy]))
+            out_gpu.append(cp.zeros((nx + 2 * hx, local_ny + 2 * hy), dtype=cp.float64))
+
+        # Run stencil with generated exchange_halos
+        for step in range(n_steps):
+            for rank in range(n_gpus):
+                cp.cuda.Device(rank).use()
+                launch(u_gpu[rank], out_gpu[rank])
+            for rank in range(n_gpus):
+                cp.cuda.Device(rank).synchronize()
+
+            for rank in range(n_gpus):
+                cp.cuda.Device(rank).use()
+                u_gpu[rank][hx:-hx, hy:-hy] = out_gpu[rank][hx:-hx, hy:-hy]
+
+            # Use generated exchange_halos
+            for rank in range(n_gpus):
+                cp.cuda.Device(rank).use()
+                exchange_mods[rank].exchange_halos(u_gpu[rank], u_gpu, rank)
+
+        # CPU reference
+        u_cpu = u_global.copy()
+        for step in range(n_steps):
+            u_cpu = apply_stencil(u_cpu, spec)
+
+        all_match = True
+        for rank in range(n_gpus):
+            cp.cuda.Device(rank).use()
+            gpu_int = cp.asnumpy(u_gpu[rank])[hx:-hx, hy:-hy]
+            col_start = hy + rank * local_ny
+            cpu_int = u_cpu[hx:-hx, col_start : col_start + local_ny]
+            maxdiff = np.max(np.abs(gpu_int - cpu_int))
+            assert np.allclose(gpu_int, cpu_int, atol=1e-10), (
+                f"Rank {rank} mismatch: max_diff={maxdiff:.2e}"
+            )
         assert decompose is not None
         assert MultiGPUStencilCodeGenerator is not None
         assert emit_multigpu_launcher is not None
