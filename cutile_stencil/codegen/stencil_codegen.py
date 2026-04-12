@@ -261,9 +261,11 @@ class StencilCodeGenerator:
         T times, swapping source/destination buffers each step.  Each kernel
         launch acts as a global barrier, ensuring correctness.
 
-        All buffers have the same expanded shape ``N = n + 2*T*halo``.
-        The grid is based on ``n_expanded = N - 2*halo``.
-        After T steps only the central ``n`` elements are meaningful.
+        Note: a fused single-kernel approach using ct.atomic_add spin-wait
+        barriers is possible (tested successfully for 1D/2D) but risks
+        deadlock when the GPU can't schedule all blocks simultaneously,
+        and the cuTile compiler struggles with large unrolled kernels (3D).
+        The multi-launch approach is simpler and universally correct.
         """
         multi_input = len(spec.inputs) > 1
         t_vars = ["TX", "TY", "TZ"][:ndim]
@@ -305,19 +307,16 @@ class StencilCodeGenerator:
             e.line(f"bufs.append(u_out)")
 
             # Launch kernel T times
-            if multi_input:
-                args = ", ".join(spec.inputs)
-                e.line(f"for _step in range({T}):")
-                with e.indent():
-                    e.line(f"ct.launch(stream, grid, {spec.name}_kernel, "
-                           f"(bufs[_step], bufs[_step + 1], "
-                           f"{', '.join(t_vars)}, {', '.join(h_vars)}))")
-            else:
-                e.line(f"for _step in range({T}):")
-                with e.indent():
-                    e.line(f"ct.launch(stream, grid, {spec.name}_kernel, "
-                           f"(bufs[_step], bufs[_step + 1], "
-                           f"{', '.join(t_vars)}, {', '.join(h_vars)}))")
+            e.line(f"for _step in range({T}):")
+            with e.indent():
+                if multi_input:
+                    # TODO: multi-input temporal not yet supported
+                    args = ", ".join(spec.inputs)
+                else:
+                    args = "bufs[_step]"
+                e.line(f"ct.launch(stream, grid, {spec.name}_kernel, "
+                       f"({args}, bufs[_step + 1], "
+                       f"{', '.join(t_vars)}, {', '.join(h_vars)}))")
 
     # ------------------------------------------------------------------
     # Stencil expression emission

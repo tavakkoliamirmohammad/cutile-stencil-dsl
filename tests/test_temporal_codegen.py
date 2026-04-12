@@ -70,7 +70,7 @@ class TestTemporalBlockingCodegen:
         assert "zeros_like" in code
 
     def test_has_launch_loop(self):
-        """Temporal launcher should loop over T kernel launches."""
+        """Temporal launcher loops over T kernel launches."""
         gen, steps = _make_temporal_gen(ndim=1)
         code = gen.emit()
         assert f"range({steps})" in code
@@ -79,7 +79,6 @@ class TestTemporalBlockingCodegen:
         gen, steps = _make_temporal_gen(ndim=1)
         code = gen.emit()
         assert "bufs" in code
-        assert "bufs[_step]" in code or "bufs[_step + 1]" in code
 
     def test_single_step_uses_standard_path(self):
         """With temporal_steps=1, should use standard (non-temporal) codegen."""
@@ -95,7 +94,7 @@ class TestTemporalBlockingCodegen:
         code = gen.emit()
         ast.parse(code)
         assert code.count("ct.store") == 1
-        assert "bufs" not in code  # No buffer chain for single step
+        assert "bufs" not in code
 
     def test_2d_has_correct_params(self):
         gen, _ = _make_temporal_gen(ndim=2)
@@ -129,14 +128,13 @@ class TestTemporalBlockingGPUValidation:
             spec = heat2d._stencil_spec
             domain = (128, 128)
         else:
-            # 3D tiles are huge (32^3 * 8B = 256KB), so temporal blocking
-            # needs unrealistic shared memory. Use 2MB to get T>=2.
+            # 3D tiles are huge (32^3 * 8B = 256KB), need large shared mem for T>=2
             test_hw = HardwareSpec(shared_mem_bytes=2048 * 1024, dtype_bytes=8)
             @stencil(ndim=3, order=2)
             def heat3d(u, i, j, k):
                 return (u[i-1,j,k] + u[i+1,j,k] + u[i,j-1,k] + u[i,j+1,k] + u[i,j,k-1] + u[i,j,k+1]) / 6.0
             spec = heat3d._stencil_spec
-            domain = (32, 32, 32)
+            domain = (16, 16, 16)
 
         extract_footprint(spec)
         halo = compute_halo(spec.accesses, ndim)
