@@ -1,0 +1,422 @@
+{
+  "gpu": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+  "n_gpus": 2,
+  "peak_bw_gbs": 1469.7,
+  "autotuned": true,
+  "results": [
+    {
+      "stencil": "heat_1d",
+      "domain": [
+        65536
+      ],
+      "tiles": [
+        256
+      ],
+      "cutile_gps": 11.16,
+      "cutile_ms": 0.0059,
+      "eff_bw_pct": 12.2,
+      "jax_gps": 1.4,
+      "jax_ms": 0.0468
+    },
+    {
+      "stencil": "heat_1d",
+      "domain": [
+        262144
+      ],
+      "tiles": [
+        256
+      ],
+      "cutile_gps": 45.54,
+      "cutile_ms": 0.0058,
+      "eff_bw_pct": 49.6,
+      "jax_gps": 5.61,
+      "jax_ms": 0.0467
+    },
+    {
+      "stencil": "heat_1d",
+      "domain": [
+        1048576
+      ],
+      "tiles": [
+        256
+      ],
+      "cutile_gps": 127.59,
+      "cutile_ms": 0.0082,
+      "eff_bw_pct": 138.9,
+      "jax_gps": 22.87,
+      "jax_ms": 0.0459
+    },
+    {
+      "stencil": "heat_1d",
+      "domain": [
+        4194304
+      ],
+      "tiles": [
+        256
+      ],
+      "cutile_gps": 204.13,
+      "cutile_ms": 0.0205,
+      "eff_bw_pct": 222.2,
+      "jax_gps": 88.98,
+      "jax_ms": 0.0471
+    },
+    {
+      "stencil": "heat_2d",
+      "domain": [
+        512,
+        512
+      ],
+      "tiles": [
+        16,
+        32
+      ],
+      "cutile_gps": 43.76,
+      "cutile_ms": 0.006,
+      "eff_bw_pct": 47.6,
+      "jax_gps": 5.66,
+      "jax_ms": 0.0463
+    },
+    {
+      "stencil": "heat_2d",
+      "domain": [
+        1024,
+        1024
+      ],
+      "tiles": [
+        16,
+        32
+      ],
+      "cutile_gps": 102.01,
+      "cutile_ms": 0.0103,
+      "eff_bw_pct": 111.1,
+      "jax_gps": 22.76,
+      "jax_ms": 0.0461
+    },
+    {
+      "stencil": "heat_2d",
+      "domain": [
+        2048,
+        2048
+      ],
+      "tiles": [
+        16,
+        32
+      ],
+      "cutile_gps": 157.02,
+      "cutile_ms": 0.0267,
+      "eff_bw_pct": 171.0,
+      "jax_gps": 62.75,
+      "jax_ms": 0.0668
+    },
+    {
+      "stencil": "heat_2d",
+      "domain": [
+        4096,
+        4096
+      ],
+      "tiles": [
+        16,
+        32
+      ],
+      "cutile_gps": 86.28,
+      "cutile_ms": 0.1944,
+      "eff_bw_pct": 93.9,
+      "jax_gps": 186.52,
+      "jax_ms": 0.09
+    },
+    {
+      "stencil": "lap_2d_5pt",
+      "domain": [
+        512,
+        512
+      ],
+      "tiles": [
+        8,
+        64
+      ],
+      "cutile_gps": 43.28,
+      "cutile_ms": 0.0061,
+      "eff_bw_pct": 47.1,
+      "jax_gps": 5.35,
+      "jax_ms": 0.049
+    },
+    {
+      "stencil": "lap_2d_5pt",
+      "domain": [
+        1024,
+        1024
+      ],
+      "tiles": [
+        8,
+        64
+      ],
+      "cutile_gps": 99.75,
+      "cutile_ms": 0.0105,
+      "eff_bw_pct": 108.6,
+      "jax_gps": 22.81,
+      "jax_ms": 0.046
+    },
+    {
+      "stencil": "lap_2d_5pt",
+      "domain": [
+        2048,
+        2048
+      ],
+      "tiles": [
+        8,
+        64
+      ],
+      "cutile_gps": 127.76,
+      "cutile_ms": 0.0328,
+      "eff_bw_pct": 139.1,
+      "jax_gps": 64.21,
+      "jax_ms": 0.0653
+    },
+    {
+      "stencil": "lap_2d_5pt",
+      "domain": [
+        4096,
+        4096
+      ],
+      "tiles": [
+        8,
+        64
+      ],
+      "cutile_gps": 87.05,
+      "cutile_ms": 0.1927,
+      "eff_bw_pct": 94.8,
+      "jax_gps": 183.33,
+      "jax_ms": 0.0915
+    },
+    {
+      "stencil": "lap_1d_4th",
+      "domain": [
+        65536
+      ],
+      "tiles": [
+        512
+      ],
+      "cutile_gps": 11.32,
+      "cutile_ms": 0.0058,
+      "eff_bw_pct": 12.3,
+      "jax_gps": 1.42,
+      "jax_ms": 0.046
+    },
+    {
+      "stencil": "lap_1d_4th",
+      "domain": [
+        262144
+      ],
+      "tiles": [
+        512
+      ],
+      "cutile_gps": 31.81,
+      "cutile_ms": 0.0082,
+      "eff_bw_pct": 34.6,
+      "jax_gps": 5.67,
+      "jax_ms": 0.0462
+    },
+    {
+      "stencil": "lap_1d_4th",
+      "domain": [
+        1048576
+      ],
+      "tiles": [
+        512
+      ],
+      "cutile_gps": 50.56,
+      "cutile_ms": 0.0207,
+      "eff_bw_pct": 55.0,
+      "jax_gps": 20.54,
+      "jax_ms": 0.051
+    },
+    {
+      "stencil": "lap_1d_4th",
+      "domain": [
+        4194304
+      ],
+      "tiles": [
+        512
+      ],
+      "cutile_gps": 55.31,
+      "cutile_ms": 0.0758,
+      "eff_bw_pct": 60.2,
+      "jax_gps": 79.86,
+      "jax_ms": 0.0525
+    },
+    {
+      "stencil": "wave_2d_4th",
+      "domain": [
+        512,
+        512
+      ],
+      "tiles": [
+        16,
+        8
+      ],
+      "cutile_gps": 26.6,
+      "cutile_ms": 0.0099,
+      "eff_bw_pct": 29.0,
+      "jax_gps": 5.67,
+      "jax_ms": 0.0462
+    },
+    {
+      "stencil": "wave_2d_4th",
+      "domain": [
+        1024,
+        1024
+      ],
+      "tiles": [
+        16,
+        8
+      ],
+      "cutile_gps": 36.5,
+      "cutile_ms": 0.0287,
+      "eff_bw_pct": 39.7,
+      "jax_gps": 22.22,
+      "jax_ms": 0.0472
+    },
+    {
+      "stencil": "wave_2d_4th",
+      "domain": [
+        2048,
+        2048
+      ],
+      "tiles": [
+        16,
+        8
+      ],
+      "cutile_gps": 40.21,
+      "cutile_ms": 0.1043,
+      "eff_bw_pct": 43.8,
+      "jax_gps": 58.2,
+      "jax_ms": 0.0721
+    },
+    {
+      "stencil": "wave_2d_4th",
+      "domain": [
+        4096,
+        4096
+      ],
+      "tiles": [
+        16,
+        8
+      ],
+      "cutile_gps": 41.51,
+      "cutile_ms": 0.4042,
+      "eff_bw_pct": 45.2,
+      "jax_gps": 149.11,
+      "jax_ms": 0.1125
+    },
+    {
+      "stencil": "lap_3d_7pt",
+      "domain": [
+        32,
+        32,
+        32
+      ],
+      "tiles": [
+        4,
+        4,
+        8
+      ],
+      "cutile_gps": 5.25,
+      "cutile_ms": 0.0062,
+      "eff_bw_pct": 5.7,
+      "jax_gps": 0.7,
+      "jax_ms": 0.0466
+    },
+    {
+      "stencil": "lap_3d_7pt",
+      "domain": [
+        64,
+        64,
+        64
+      ],
+      "tiles": [
+        4,
+        4,
+        8
+      ],
+      "cutile_gps": 31.85,
+      "cutile_ms": 0.0082,
+      "eff_bw_pct": 34.7,
+      "jax_gps": 5.63,
+      "jax_ms": 0.0466
+    },
+    {
+      "stencil": "lap_3d_7pt",
+      "domain": [
+        128,
+        128,
+        128
+      ],
+      "tiles": [
+        4,
+        4,
+        8
+      ],
+      "cutile_gps": 53.78,
+      "cutile_ms": 0.039,
+      "eff_bw_pct": 58.5,
+      "jax_gps": 44.63,
+      "jax_ms": 0.047
+    },
+    {
+      "stencil": "advect_1d",
+      "domain": [
+        65536
+      ],
+      "tiles": [
+        512
+      ],
+      "cutile_gps": 11.27,
+      "cutile_ms": 0.0058,
+      "eff_bw_pct": 12.3,
+      "jax_gps": 1.42,
+      "jax_ms": 0.0461
+    },
+    {
+      "stencil": "advect_1d",
+      "domain": [
+        262144
+      ],
+      "tiles": [
+        512
+      ],
+      "cutile_gps": 45.47,
+      "cutile_ms": 0.0058,
+      "eff_bw_pct": 49.5,
+      "jax_gps": 5.69,
+      "jax_ms": 0.0461
+    },
+    {
+      "stencil": "advect_1d",
+      "domain": [
+        1048576
+      ],
+      "tiles": [
+        512
+      ],
+      "cutile_gps": 127.31,
+      "cutile_ms": 0.0082,
+      "eff_bw_pct": 138.6,
+      "jax_gps": 22.82,
+      "jax_ms": 0.0459
+    },
+    {
+      "stencil": "advect_1d",
+      "domain": [
+        4194304
+      ],
+      "tiles": [
+        512
+      ],
+      "cutile_gps": 204.2,
+      "cutile_ms": 0.0205,
+      "eff_bw_pct": 222.3,
+      "jax_gps": 88.88,
+      "jax_ms": 0.0472
+    }
+  ]
+}
