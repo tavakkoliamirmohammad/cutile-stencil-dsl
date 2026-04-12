@@ -71,6 +71,7 @@ def decompose(
     num_gpus: int,
     halo_widths: Tuple[int, ...],
     split_axis: Optional[int] = None,
+    periodic: bool = False,
 ) -> DomainDecomposition:
     """Partition a domain across GPUs along one axis.
 
@@ -84,6 +85,9 @@ def decompose(
         Halo width per dimension (from the stencil specification).
     split_axis : int, optional
         Which axis to split along. Defaults to the longest dimension.
+    periodic : bool, optional
+        If True, the domain wraps around: the first and last partitions
+        become neighbors of each other (periodic boundary conditions).
 
     Returns
     -------
@@ -148,8 +152,20 @@ def decompose(
         local_offset = tuple(local_offset)
 
         # Neighbors along split axis
-        left_rank = rank - 1 if rank > 0 else None
-        right_rank = rank + 1 if rank < num_gpus - 1 else None
+        if rank > 0:
+            left_rank = rank - 1
+        elif periodic and num_gpus > 1:
+            left_rank = num_gpus - 1
+        else:
+            left_rank = None
+
+        if rank < num_gpus - 1:
+            right_rank = rank + 1
+        elif periodic and num_gpus > 1:
+            right_rank = 0
+        else:
+            right_rank = None
+
         neighbors = {"left": left_rank, "right": right_rank}
 
         partitions.append(
