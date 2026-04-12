@@ -15,7 +15,11 @@ from cutile_stencil.dsl.types import HardwareSpec, StencilSpec, RooflineResult
 
 
 class _FlopCounter(ast.NodeVisitor):
-    """Count arithmetic operations in a function body."""
+    """Count arithmetic operations in a function body.
+
+    Subscript index arithmetic (e.g. ``i - 1`` in ``u[i - 1]``) is treated as
+    address computation and is intentionally excluded from the FLOP count.
+    """
 
     def __init__(self):
         self.adds = 0
@@ -23,6 +27,11 @@ class _FlopCounter(ast.NodeVisitor):
         self.divs = 0
         self.pows = 0
         self.mods = 0
+
+    def visit_Subscript(self, node: ast.Subscript):
+        # Visit the array expression (e.g. ``u``) but skip the slice
+        # so that index arithmetic like ``i - 1`` is not counted as FLOPs.
+        self.visit(node.value)
 
     def visit_BinOp(self, node: ast.BinOp):
         if isinstance(node.op, (ast.Add, ast.Sub)):
@@ -32,7 +41,11 @@ class _FlopCounter(ast.NodeVisitor):
         elif isinstance(node.op, (ast.Div, ast.FloorDiv)):
             self.divs += 1
         elif isinstance(node.op, ast.Pow):
-            self.pows += 1
+            # x ** n with integer n compiles to n-1 multiplications
+            if isinstance(node.right, ast.Constant) and isinstance(node.right.value, int):
+                self.muls += max(node.right.value - 1, 0)
+            else:
+                self.pows += 1
         elif isinstance(node.op, ast.Mod):
             self.mods += 1
         self.generic_visit(node)
@@ -77,8 +90,18 @@ def roofline_analysis(
     try:
         src = textwrap.dedent(inspect.getsource(spec.update_fn))
         tree = ast.parse(src)
+        # Find the FunctionDef and only count FLOPs in its body,
+        # not in decorators or other top-level nodes
+        func_def = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                func_def = node
+                break
+        if func_def is None:
+            raise ValueError("No function definition found in stencil source")
         counter = _FlopCounter()
-        counter.visit(tree)
+        for stmt in func_def.body:
+            counter.visit(stmt)
         flops = max(counter.total, 1)
     except OSError:
         # Synthetic functions (e.g. from stencil bridge exec()) have no source.

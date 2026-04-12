@@ -208,11 +208,13 @@ class TestFlopCounting:
         assert counter.total == 3
 
     def test_pow_counted(self):
-        """Exponentiation is counted as a FLOP."""
+        """Integer pow expands to n-1 multiplications."""
         counter = self._count_flops("x ** 2 + y ** 3")
-        assert counter.pows == 2
+        # x**2 = 1 mul, y**3 = 2 muls, + = 1 add
+        assert counter.muls == 3
+        assert counter.pows == 0
         assert counter.adds == 1
-        assert counter.total == 3
+        assert counter.total == 4
 
     def test_mod_counted(self):
         """Modulo is counted as a FLOP."""
@@ -242,8 +244,8 @@ class TestFlopCounting:
         assert spec.order == 2
         extract_footprint(spec)
         result = roofline_analysis(spec, hw)
-        # Should count: 1 pow + 1 add = 2 flops minimum
-        assert result.flops_per_point >= 2
+        # **2 = 1 mul, + = 1 add = 2 FLOPs; index arithmetic excluded
+        assert result.flops_per_point == 2
 
 
 class TestTemporalBlockingDimensionIndependentHalos:
@@ -274,3 +276,26 @@ class TestTemporalBlockingDimensionIndependentHalos:
             assert "ct.load" in code
             assert "ct.bid(0)" in code
             assert "ct.bid(1)" in code
+
+
+class TestRooflineFlopScope:
+    """FLOP counter must only count operations in the function body, not decorators."""
+
+    def test_decorator_arithmetic_not_counted(self):
+        """Arithmetic in @stencil(order=2*3) must not inflate FLOP count."""
+        @stencil(ndim=1, order=2 * 3)
+        def simple_avg(u, i):
+            return u[i - 1] + u[i + 1]
+
+        spec = simple_avg._stencil_spec
+        extract_footprint(spec)
+        spec.halo_widths = compute_halo(spec.accesses, 1)
+
+        result = roofline_analysis(spec, hw)
+        # Body has 1 real FLOP: the + between two array loads.
+        # Index arithmetic (i-1, i+1) is address computation, not counted.
+        # Decorator arithmetic (2*3) must also not leak in.
+        assert result.flops_per_point == 1, (
+            f"Expected 1 FLOP (1 Add between loads), got {result.flops_per_point}. "
+            f"Index or decorator arithmetic may be leaking into FLOP count."
+        )
