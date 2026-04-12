@@ -83,6 +83,80 @@ def emit_cg_loop(
     e.line("return x, max_iter, math.sqrt(r_dot_r)")
 
 
+def emit_cg_loop_with_history(
+    e: CodeEmitter,
+    operator_call: str,
+    cfg: SolverConfig | None = None,
+    dtype: str = "float64",
+) -> None:
+    """Emit the CG iteration body with convergence history tracking.
+
+    Like ``emit_cg_loop`` but collects residual norms each iteration and
+    returns a ``ConvergenceHistory`` instead of a plain tuple.
+
+    Assumes the same names in scope as ``emit_cg_loop``, plus
+    ``residual_norms`` (list) and ``t_start`` (float from time.perf_counter).
+    """
+    cfg = cfg or DEFAULT_SOLVER
+
+    e.line("residual_norms = [math.sqrt(r_dot_r)]")
+    e.line("t_start = time.perf_counter()")
+    e.blank()
+    e.line("for it in range(max_iter):")
+    with e.indent():
+        e.line("if math.sqrt(r_dot_r) < tol:")
+        with e.indent():
+            e.line("return ConvergenceHistory(")
+            with e.indent():
+                e.line("iterations=it,")
+                e.line("residual_norms=residual_norms,")
+                e.line("converged=True,")
+                e.line("final_residual=residual_norms[-1],")
+                e.line("tolerance=tol,")
+                e.line("max_iterations=max_iter,")
+            e.line(")")
+        e.blank()
+        e.line(f"# Ap = A @ p")
+        e.line(operator_call)
+        e.blank()
+        e.line("# p_dot_Ap = p^T Ap")
+        e.line("buf.fill(0)")
+        e.line("ct.launch(stream, grid, dot_kernel, (p, Ap, buf, tile_size))")
+        e.line("p_dot_Ap = buf.item()")
+        e.blank()
+        e.line("alpha = r_dot_r / p_dot_Ap")
+        e.blank()
+        e.line("# x = x + alpha * p")
+        e.line("ct.launch(stream, grid, axpy_kernel, (p, x, alpha, tile_size))")
+        e.blank()
+        e.line("# r = r - alpha * Ap")
+        e.line("ct.launch(stream, grid, axpy_kernel, (Ap, r, -alpha, tile_size))")
+        e.blank()
+        e.line("# new_r_dot_r = r^T r")
+        e.line("buf.fill(0)")
+        e.line("ct.launch(stream, grid, dot_kernel, (r, r, buf, tile_size))")
+        e.line("new_r_dot_r = buf.item()")
+        e.blank()
+        e.line("residual_norms.append(math.sqrt(new_r_dot_r))")
+        e.blank()
+        e.line("beta = new_r_dot_r / r_dot_r")
+        e.blank()
+        e.line("# p = r + beta * p")
+        e.line("p = r + beta * p")
+        e.blank()
+        e.line("r_dot_r = new_r_dot_r")
+    e.blank()
+    e.line("return ConvergenceHistory(")
+    with e.indent():
+        e.line("iterations=max_iter,")
+        e.line("residual_norms=residual_norms,")
+        e.line("converged=False,")
+        e.line("final_residual=residual_norms[-1],")
+        e.line("tolerance=tol,")
+        e.line("max_iterations=max_iter,")
+    e.line(")")
+
+
 def emit_cg_function(
     e: CodeEmitter,
     func_name: str,
@@ -90,11 +164,12 @@ def emit_cg_function(
     cfg: SolverConfig | None = None,
     dtype: str = "float64",
     extra_params: str = "",
+    return_history: bool = False,
 ) -> None:
     """Emit a complete CG solver function.
 
     Emits the function signature, setup (initial residual, etc.), and the
-    CG loop via ``emit_cg_loop``.
+    CG loop via ``emit_cg_loop`` or ``emit_cg_loop_with_history``.
 
     Parameters
     ----------
@@ -111,6 +186,9 @@ def emit_cg_function(
     extra_params : str
         Additional parameters to add to the function signature, e.g.
         ``"spmv_fn, "`` (note trailing comma+space).
+    return_history : bool
+        When True, emit code that returns a ``ConvergenceHistory`` object
+        instead of a plain ``(x, iters, residual)`` tuple.
     """
     cfg = cfg or DEFAULT_SOLVER
 
@@ -134,7 +212,80 @@ def emit_cg_function(
         e.line("ct.launch(stream, grid, dot_kernel, (r, r, buf, tile_size))")
         e.line("r_dot_r = buf.item()")
         e.blank()
-        emit_cg_loop(e, operator_call, cfg, dtype)
+        if return_history:
+            emit_cg_loop_with_history(e, operator_call, cfg, dtype)
+        else:
+            emit_cg_loop(e, operator_call, cfg, dtype)
+
+
+def emit_preconditioned_cg_loop(
+    e: CodeEmitter,
+    operator_call: str,
+    cfg: SolverConfig | None = None,
+    dtype: str = "float64",
+) -> None:
+    """Emit the preconditioned CG iteration body.
+
+    Implements preconditioned CG where z = M^{-1} r and beta is computed
+    using dot(r, z) instead of dot(r, r).
+
+    Assumes the following names are already in scope in the generated code:
+    ``x``, ``r``, ``z``, ``p``, ``Ap``, ``buf``, ``stream``, ``grid``,
+    ``dot_kernel``, ``axpy_kernel``, ``launch_jacobi_precondition``,
+    ``tile_size``, ``math``, ``ct``.
+    The variable ``r_dot_z`` must be initialised before calling this.
+
+    Parameters
+    ----------
+    e : CodeEmitter
+        The emitter to write into (at current indent level).
+    operator_call : str
+        Code string that computes ``Ap = A @ p``.
+    cfg : SolverConfig, optional
+        Solver configuration for defaults.
+    dtype : str
+        Data type string.
+    """
+    cfg = cfg or DEFAULT_SOLVER
+
+    e.line("for it in range(max_iter):")
+    with e.indent():
+        e.line("if math.sqrt(abs(r_dot_z)) < tol:")
+        with e.indent():
+            e.line("return x, it, math.sqrt(abs(r_dot_z))")
+        e.blank()
+        e.line("# Ap = A @ p")
+        e.line(operator_call)
+        e.blank()
+        e.line("# p_dot_Ap = p^T Ap")
+        e.line("buf.fill(0)")
+        e.line("ct.launch(stream, grid, dot_kernel, (p, Ap, buf, tile_size))")
+        e.line("p_dot_Ap = buf.item()")
+        e.blank()
+        e.line("alpha = r_dot_z / p_dot_Ap")
+        e.blank()
+        e.line("# x = x + alpha * p")
+        e.line("ct.launch(stream, grid, axpy_kernel, (p, x, alpha, tile_size))")
+        e.blank()
+        e.line("# r = r - alpha * Ap")
+        e.line("ct.launch(stream, grid, axpy_kernel, (Ap, r, -alpha, tile_size))")
+        e.blank()
+        e.line("# z = M^{-1} r  (apply preconditioner to new residual)")
+        e.line("launch_jacobi_precondition(r, z)")
+        e.blank()
+        e.line("# new_r_dot_z = r^T z")
+        e.line("buf.fill(0)")
+        e.line("ct.launch(stream, grid, dot_kernel, (r, z, buf, tile_size))")
+        e.line("new_r_dot_z = buf.item()")
+        e.blank()
+        e.line("beta = new_r_dot_z / r_dot_z")
+        e.blank()
+        e.line("# p = z + beta * p")
+        e.line("p = z + beta * p")
+        e.blank()
+        e.line("r_dot_z = new_r_dot_z")
+    e.blank()
+    e.line("return x, max_iter, math.sqrt(abs(r_dot_z))")
 
 
 def emit_inner_cg_function(
