@@ -294,7 +294,7 @@ def _emit_kernel(
         for d in range(ndim):
             e.line(f"{n_vars[d]} = {first_arr}.shape[{d}] - 2 * {halo_vars[d]}")
 
-        # Sliced views for each unique access
+        # Sliced views for each unique access — full interior region
         for info in meta.accesses:
             arr_name = meta.input_names[info.array_index]
             chain = arr_name
@@ -314,13 +314,20 @@ def _emit_kernel(
             )
         e.line(f"out = {out_chain}")
 
-        # Load tiles
+        # Load tiles — ct.load(view, index=(bx, by, ...), shape=(TX, TY, ...))
         idx_tuple = ", ".join(bid_vars)
         shape_tuple = ", ".join(tile_vars)
+        # cuTile requires tuple args; for 1D we need trailing comma
+        if ndim == 1:
+            idx_arg = f"({idx_tuple},)"
+            shape_arg = f"({shape_tuple},)"
+        else:
+            idx_arg = f"({idx_tuple})"
+            shape_arg = f"({shape_tuple})"
         for info in meta.accesses:
             e.line(
                 f"t_{info.view_name} = ct.load({info.view_name}, "
-                f"index=({idx_tuple}), shape=({shape_tuple}))"
+                f"index={idx_arg}, shape={shape_arg})"
             )
 
         e.blank()
@@ -328,8 +335,8 @@ def _emit_kernel(
         e.line(f"result = {meta.expression}")
         e.blank()
 
-        # Store
-        e.line(f"ct.store(out, index=({idx_tuple}), tile=result)")
+        # Store — ct.store(view, index, tile)
+        e.line(f"ct.store(out, index={idx_arg}, tile=result)")
 
 
 def _emit_launcher(
