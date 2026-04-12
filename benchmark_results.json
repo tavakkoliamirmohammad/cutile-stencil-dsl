@@ -1,7 +1,7 @@
 {
-  "gpu": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+  "gpu": "NVIDIA RTX PRO 4000 Blackwell",
   "n_gpus": 2,
-  "peak_bw_gbs": 1469.7,
+  "peak_bw_gbs": 553.3,
   "autotuned": true,
   "results": [
     {
@@ -10,13 +10,13 @@
         65536
       ],
       "tiles": [
-        256
+        128
       ],
-      "cutile_gps": 11.16,
+      "cutile_gps": 11.11,
       "cutile_ms": 0.0059,
-      "eff_bw_pct": 12.2,
-      "jax_gps": 1.4,
-      "jax_ms": 0.0468
+      "eff_bw_pct": 32.1,
+      "jax_gps": 1.19,
+      "jax_ms": 0.0551
     },
     {
       "stencil": "heat_1d",
@@ -24,13 +24,13 @@
         262144
       ],
       "tiles": [
-        256
+        128
       ],
-      "cutile_gps": 45.54,
+      "cutile_gps": 45.35,
       "cutile_ms": 0.0058,
-      "eff_bw_pct": 49.6,
-      "jax_gps": 5.61,
-      "jax_ms": 0.0467
+      "eff_bw_pct": 131.1,
+      "jax_gps": 4.73,
+      "jax_ms": 0.0554
     },
     {
       "stencil": "heat_1d",
@@ -38,13 +38,13 @@
         1048576
       ],
       "tiles": [
-        256
+        128
       ],
-      "cutile_gps": 127.59,
-      "cutile_ms": 0.0082,
-      "eff_bw_pct": 138.9,
-      "jax_gps": 22.87,
-      "jax_ms": 0.0459
+      "cutile_gps": 72.91,
+      "cutile_ms": 0.0144,
+      "eff_bw_pct": 210.9,
+      "jax_gps": 18.85,
+      "jax_ms": 0.0556
     },
     {
       "stencil": "heat_1d",
@@ -52,13 +52,13 @@
         4194304
       ],
       "tiles": [
-        256
+        128
       ],
-      "cutile_gps": 204.13,
-      "cutile_ms": 0.0205,
-      "eff_bw_pct": 222.2,
-      "jax_gps": 88.98,
-      "jax_ms": 0.0471
+      "cutile_gps": 40.09,
+      "cutile_ms": 0.1046,
+      "eff_bw_pct": 115.9,
+      "jax_gps": 61.58,
+      "jax_ms": 0.0681
     },
     {
       "stencil": "heat_2d",
@@ -67,14 +67,14 @@
         512
       ],
       "tiles": [
-        16,
-        32
+        32,
+        8
       ],
-      "cutile_gps": 43.76,
+      "cutile_gps": 43.68,
       "cutile_ms": 0.006,
-      "eff_bw_pct": 47.6,
-      "jax_gps": 5.66,
-      "jax_ms": 0.0463
+      "eff_bw_pct": 126.3,
+      "jax_gps": 4.77,
+      "jax_ms": 0.055
     },
     {
       "stencil": "heat_2d",
@@ -83,14 +83,14 @@
         1024
       ],
       "tiles": [
-        16,
-        32
+        32,
+        8
       ],
-      "cutile_gps": 102.01,
-      "cutile_ms": 0.0103,
-      "eff_bw_pct": 111.1,
-      "jax_gps": 22.76,
-      "jax_ms": 0.0461
+      "cutile_gps": 56.72,
+      "cutile_ms": 0.0185,
+      "eff_bw_pct": 164.0,
+      "jax_gps": 18.4,
+      "jax_ms": 0.057
     },
     {
       "stencil": "heat_2d",
@@ -99,14 +99,14 @@
         2048
       ],
       "tiles": [
-        16,
-        32
+        32,
+        8
       ],
-      "cutile_gps": 157.02,
-      "cutile_ms": 0.0267,
-      "eff_bw_pct": 171.0,
-      "jax_gps": 62.75,
-      "jax_ms": 0.0668
+      "cutile_gps": 34.65,
+      "cutile_ms": 0.121,
+      "eff_bw_pct": 100.2,
+      "jax_gps": 57.8,
+      "jax_ms": 0.0726
     },
     {
       "stencil": "heat_2d",
@@ -115,14 +115,14 @@
         4096
       ],
       "tiles": [
-        16,
-        32
+        32,
+        8
       ],
-      "cutile_gps": 86.28,
-      "cutile_ms": 0.1944,
-      "eff_bw_pct": 93.9,
-      "jax_gps": 186.52,
-      "jax_ms": 0.09
+      "cutile_gps": 27.23,
+      "cutile_ms": 0.6162,
+      "eff_bw_pct": 78.7,
+      "jax_gps": 56.1,
+      "jax_ms": 0.2991
     },
     {
       "stencil": "lap_2d_5pt",
@@ -132,13 +132,13 @@
       ],
       "tiles": [
         8,
-        64
+        16
       ],
-      "cutile_gps": 43.28,
-      "cutile_ms": 0.0061,
-      "eff_bw_pct": 47.1,
-      "jax_gps": 5.35,
-      "jax_ms": 0.049
+      "cutile_gps": 31.92,
+      "cutile_ms": 0.0082,
+      "eff_bw_pct": 92.3,
+      "jax_gps": 4.77,
+      "jax_ms": 0.055
     },
     {
       "stencil": "lap_2d_5pt",
@@ -148,13 +148,13 @@
       ],
       "tiles": [
         8,
-        64
+        16
       ],
-      "cutile_gps": 99.75,
-      "cutile_ms": 0.0105,
-      "eff_bw_pct": 108.6,
-      "jax_gps": 22.81,
-      "jax_ms": 0.046
+      "cutile_gps": 51.06,
+      "cutile_ms": 0.0205,
+      "eff_bw_pct": 147.7,
+      "jax_gps": 18.31,
+      "jax_ms": 0.0573
     },
     {
       "stencil": "lap_2d_5pt",
@@ -164,13 +164,13 @@
       ],
       "tiles": [
         8,
-        64
+        16
       ],
-      "cutile_gps": 127.76,
-      "cutile_ms": 0.0328,
-      "eff_bw_pct": 139.1,
-      "jax_gps": 64.21,
-      "jax_ms": 0.0653
+      "cutile_gps": 36.33,
+      "cutile_ms": 0.1155,
+      "eff_bw_pct": 105.1,
+      "jax_gps": 58.21,
+      "jax_ms": 0.0721
     },
     {
       "stencil": "lap_2d_5pt",
@@ -180,13 +180,13 @@
       ],
       "tiles": [
         8,
-        64
+        16
       ],
-      "cutile_gps": 87.05,
-      "cutile_ms": 0.1927,
-      "eff_bw_pct": 94.8,
-      "jax_gps": 183.33,
-      "jax_ms": 0.0915
+      "cutile_gps": 29.83,
+      "cutile_ms": 0.5625,
+      "eff_bw_pct": 86.3,
+      "jax_gps": 56.77,
+      "jax_ms": 0.2955
     },
     {
       "stencil": "lap_1d_4th",
@@ -196,11 +196,11 @@
       "tiles": [
         512
       ],
-      "cutile_gps": 11.32,
-      "cutile_ms": 0.0058,
-      "eff_bw_pct": 12.3,
-      "jax_gps": 1.42,
-      "jax_ms": 0.046
+      "cutile_gps": 11.41,
+      "cutile_ms": 0.0057,
+      "eff_bw_pct": 33.0,
+      "jax_gps": 1.19,
+      "jax_ms": 0.0552
     },
     {
       "stencil": "lap_1d_4th",
@@ -210,11 +210,11 @@
       "tiles": [
         512
       ],
-      "cutile_gps": 31.81,
-      "cutile_ms": 0.0082,
-      "eff_bw_pct": 34.6,
-      "jax_gps": 5.67,
-      "jax_ms": 0.0462
+      "cutile_gps": 18.22,
+      "cutile_ms": 0.0144,
+      "eff_bw_pct": 52.7,
+      "jax_gps": 4.74,
+      "jax_ms": 0.0554
     },
     {
       "stencil": "lap_1d_4th",
@@ -224,11 +224,11 @@
       "tiles": [
         512
       ],
-      "cutile_gps": 50.56,
-      "cutile_ms": 0.0207,
-      "eff_bw_pct": 55.0,
-      "jax_gps": 20.54,
-      "jax_ms": 0.051
+      "cutile_gps": 21.3,
+      "cutile_ms": 0.0492,
+      "eff_bw_pct": 61.6,
+      "jax_gps": 18.94,
+      "jax_ms": 0.0554
     },
     {
       "stencil": "lap_1d_4th",
@@ -238,11 +238,11 @@
       "tiles": [
         512
       ],
-      "cutile_gps": 55.31,
-      "cutile_ms": 0.0758,
-      "eff_bw_pct": 60.2,
-      "jax_gps": 79.86,
-      "jax_ms": 0.0525
+      "cutile_gps": 22.32,
+      "cutile_ms": 0.1879,
+      "eff_bw_pct": 64.6,
+      "jax_gps": 61.56,
+      "jax_ms": 0.0681
     },
     {
       "stencil": "wave_2d_4th",
@@ -251,14 +251,14 @@
         512
       ],
       "tiles": [
-        16,
+        32,
         8
       ],
-      "cutile_gps": 26.6,
-      "cutile_ms": 0.0099,
-      "eff_bw_pct": 29.0,
-      "jax_gps": 5.67,
-      "jax_ms": 0.0462
+      "cutile_gps": 14.17,
+      "cutile_ms": 0.0185,
+      "eff_bw_pct": 41.0,
+      "jax_gps": 4.75,
+      "jax_ms": 0.0552
     },
     {
       "stencil": "wave_2d_4th",
@@ -267,14 +267,14 @@
         1024
       ],
       "tiles": [
-        16,
+        32,
         8
       ],
-      "cutile_gps": 36.5,
-      "cutile_ms": 0.0287,
-      "eff_bw_pct": 39.7,
-      "jax_gps": 22.22,
-      "jax_ms": 0.0472
+      "cutile_gps": 15.51,
+      "cutile_ms": 0.0676,
+      "eff_bw_pct": 44.8,
+      "jax_gps": 16.94,
+      "jax_ms": 0.0619
     },
     {
       "stencil": "wave_2d_4th",
@@ -283,14 +283,14 @@
         2048
       ],
       "tiles": [
-        16,
+        32,
         8
       ],
-      "cutile_gps": 40.21,
-      "cutile_ms": 0.1043,
-      "eff_bw_pct": 43.8,
-      "jax_gps": 58.2,
-      "jax_ms": 0.0721
+      "cutile_gps": 16.17,
+      "cutile_ms": 0.2594,
+      "eff_bw_pct": 46.8,
+      "jax_gps": 51.03,
+      "jax_ms": 0.0822
     },
     {
       "stencil": "wave_2d_4th",
@@ -299,14 +299,14 @@
         4096
       ],
       "tiles": [
-        16,
+        32,
         8
       ],
-      "cutile_gps": 41.51,
-      "cutile_ms": 0.4042,
-      "eff_bw_pct": 45.2,
-      "jax_gps": 149.11,
-      "jax_ms": 0.1125
+      "cutile_gps": 16.43,
+      "cutile_ms": 1.0211,
+      "eff_bw_pct": 47.5,
+      "jax_gps": 56.1,
+      "jax_ms": 0.2991
     },
     {
       "stencil": "lap_3d_7pt",
@@ -316,15 +316,15 @@
         32
       ],
       "tiles": [
-        4,
-        4,
-        8
+        8,
+        16,
+        4
       ],
-      "cutile_gps": 5.25,
-      "cutile_ms": 0.0062,
-      "eff_bw_pct": 5.7,
-      "jax_gps": 0.7,
-      "jax_ms": 0.0466
+      "cutile_gps": 5.21,
+      "cutile_ms": 0.0063,
+      "eff_bw_pct": 15.1,
+      "jax_gps": 0.58,
+      "jax_ms": 0.0562
     },
     {
       "stencil": "lap_3d_7pt",
@@ -334,15 +334,15 @@
         64
       ],
       "tiles": [
-        4,
-        4,
-        8
+        8,
+        16,
+        4
       ],
-      "cutile_gps": 31.85,
-      "cutile_ms": 0.0082,
-      "eff_bw_pct": 34.7,
-      "jax_gps": 5.63,
-      "jax_ms": 0.0466
+      "cutile_gps": 15.95,
+      "cutile_ms": 0.0164,
+      "eff_bw_pct": 46.1,
+      "jax_gps": 4.73,
+      "jax_ms": 0.0554
     },
     {
       "stencil": "lap_3d_7pt",
@@ -352,15 +352,15 @@
         128
       ],
       "tiles": [
-        4,
-        4,
-        8
+        8,
+        16,
+        4
       ],
-      "cutile_gps": 53.78,
-      "cutile_ms": 0.039,
-      "eff_bw_pct": 58.5,
-      "jax_gps": 44.63,
-      "jax_ms": 0.047
+      "cutile_gps": 22.21,
+      "cutile_ms": 0.0944,
+      "eff_bw_pct": 64.2,
+      "jax_gps": 32.2,
+      "jax_ms": 0.0651
     },
     {
       "stencil": "advect_1d",
@@ -370,11 +370,11 @@
       "tiles": [
         512
       ],
-      "cutile_gps": 11.27,
+      "cutile_gps": 11.38,
       "cutile_ms": 0.0058,
-      "eff_bw_pct": 12.3,
-      "jax_gps": 1.42,
-      "jax_ms": 0.0461
+      "eff_bw_pct": 32.9,
+      "jax_gps": 1.43,
+      "jax_ms": 0.0458
     },
     {
       "stencil": "advect_1d",
@@ -384,11 +384,11 @@
       "tiles": [
         512
       ],
-      "cutile_gps": 45.47,
+      "cutile_gps": 45.03,
       "cutile_ms": 0.0058,
-      "eff_bw_pct": 49.5,
-      "jax_gps": 5.69,
-      "jax_ms": 0.0461
+      "eff_bw_pct": 130.2,
+      "jax_gps": 5.72,
+      "jax_ms": 0.0458
     },
     {
       "stencil": "advect_1d",
@@ -398,10 +398,10 @@
       "tiles": [
         512
       ],
-      "cutile_gps": 127.31,
-      "cutile_ms": 0.0082,
-      "eff_bw_pct": 138.6,
-      "jax_gps": 22.82,
+      "cutile_gps": 72.89,
+      "cutile_ms": 0.0144,
+      "eff_bw_pct": 210.8,
+      "jax_gps": 22.86,
       "jax_ms": 0.0459
     },
     {
@@ -412,11 +412,11 @@
       "tiles": [
         512
       ],
-      "cutile_gps": 204.2,
-      "cutile_ms": 0.0205,
-      "eff_bw_pct": 222.3,
-      "jax_gps": 88.88,
-      "jax_ms": 0.0472
+      "cutile_gps": 40.29,
+      "cutile_ms": 0.1041,
+      "eff_bw_pct": 116.5,
+      "jax_gps": 62.18,
+      "jax_ms": 0.0675
     }
   ]
 }
