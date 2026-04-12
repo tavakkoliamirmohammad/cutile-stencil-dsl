@@ -248,146 +248,22 @@ class StencilCodeGenerator:
         e.blank()
 
         access_names = self._build_access_names(spec)
-        self._emit_temporal_kernel_nd(e, spec, access_names, ndim, tile_sizes, halo_widths, T)
+        # Emit the single-step kernel (reused for each temporal step)
+        self._emit_kernel_nd(e, spec, access_names, ndim, tile_sizes, halo_widths)
+        # Emit temporal launcher that calls the kernel T times with buffer swaps
         self._emit_temporal_launcher_nd(e, spec, ndim, tile_sizes, halo_widths, T)
         return e.render()
 
-    def _emit_temporal_kernel_nd(
-        self, e: CodeEmitter, spec, access_names, ndim, tile_sizes, halo_widths, T
-    ):
-        """Emit an nD temporal-blocking kernel with T unrolled steps.
-
-        All buffers have the same shape N per dimension.  The grid interior
-        is ``n_expanded = N - 2*halo``.  Every step reads with views starting
-        at ``halo + off`` and stores at ``halo`` in the destination buffer.
-        Boundary blocks may produce garbage (from reading zero-init halo)
-        but only the central ``n = n_expanded - 2*(T-1)*halo`` elements of
-        the final output are meaningful.
-        """
-        bid_vars = ["bx", "by", "bz"][:ndim]
-        tile_vars = ["TX", "TY", "TZ"][:ndim]
-        halo_vars = ["HX", "HY", "HZ"][:ndim]
-        n_vars = ["nx", "ny", "nz"][:ndim]
-
-        tile_const_params = ", ".join(f"{tv}: ConstInt" for tv in tile_vars)
-        halo_const_params = ", ".join(f"{hv}: ConstInt" for hv in halo_vars)
-
-        multi_input = len(spec.inputs) > 1
-        input_params = ", ".join(spec.inputs) if multi_input else spec.inputs[0]
-
-        # Tmp buffer parameters: u_tmp0, u_tmp1, ..., u_tmp{T-2}
-        tmp_params = ", ".join(f"u_tmp{s}" for s in range(T - 1))
-        if tmp_params:
-            tmp_params = ", " + tmp_params
-
-        e.line("@ct.kernel")
-        e.line(
-            f"def {spec.name}_temporal_kernel("
-            f"{input_params}{tmp_params}, u_out, "
-            f"{tile_const_params}, {halo_const_params}):"
-        )
-        with e.indent():
-            # Block indices
-            for i, bv in enumerate(bid_vars):
-                e.line(f"{bv} = ct.bid({i})")
-
-            # n_expanded = u_in.shape[d] - 2*halo  (= n + 2*(T-1)*halo)
-            first_arr = spec.inputs[0]
-            for d in range(ndim):
-                h = halo_widths[d]
-                e.line(f"{n_vars[d]} = {first_arr}.shape[{d}] - {2 * h}")
-
-            # Unroll each temporal step
-            for s in range(T):
-                e.blank()
-                e.line(f"# --- Temporal step {s + 1} of {T} ---")
-
-                # Source / destination arrays for this step
-                src_arr = spec.inputs[0] if s == 0 else f"u_tmp{s - 1}"
-                dst_arr = "u_out" if s == T - 1 else f"u_tmp{s}"
-
-                # Source views for each stencil access.
-                # All buffers have shape N = n_expanded + 2*halo.  The grid
-                # interior of size n_expanded starts at offset halo in every
-                # buffer.  An access with offset `off` shifts the view:
-                #   start = halo + off,  stop = halo + off + n_expanded
-                step_tile_names = []
-                for vname, offsets, arr_name in access_names:
-                    sv_name = f"{vname}_s{s}"
-                    # Multi-input stencils: at step 0, read from actual input arrays
-                    slice_src = arr_name if (multi_input and s == 0) else src_arr
-
-                    chain = slice_src
-                    for d_idx in range(ndim):
-                        off = offsets[d_idx]
-                        h = halo_widths[d_idx]
-                        start_val = h + off
-                        start_str = str(start_val)
-                        if start_val == 0:
-                            stop_str = f"{n_vars[d_idx]}"
-                        elif start_val > 0:
-                            stop_str = f"{n_vars[d_idx]} + {start_val}"
-                        else:
-                            stop_str = f"{n_vars[d_idx]} - {abs(start_val)}"
-                        chain = f"{chain}.slice(axis={d_idx}, start={start_str}, stop={stop_str})"
-                    e.line(f"{sv_name} = {chain}")
-                    step_tile_names.append(sv_name)
-
-                # Output view for store: always at offset halo in dst buffer
-                out_name = f"out_s{s}"
-                out_chain = dst_arr
-                for d_idx in range(ndim):
-                    h = halo_widths[d_idx]
-                    out_chain = (
-                        f"{out_chain}.slice(axis={d_idx}, "
-                        f"start={h}, stop={h} + {n_vars[d_idx]})"
-                    )
-                e.line(f"{out_name} = {out_chain}")
-
-                # Load tiles
-                shape_tuple = ", ".join(tile_vars)
-                idx_tuple = ", ".join(bid_vars)
-                for sv_name in step_tile_names:
-                    e.line(
-                        f"t_{sv_name} = ct.load({sv_name}, "
-                        f"index=({idx_tuple}), shape=({shape_tuple}))"
-                    )
-
-                # Stencil expression
-                offset_to_tile = {}
-                for (vname, offsets, arr_name), sv_name in zip(access_names, step_tile_names):
-                    key = (arr_name, offsets)
-                    if key not in offset_to_tile:
-                        offset_to_tile[key] = f"t_{sv_name}"
-                term_names = [offset_to_tile[(acc.array_name, acc.offsets)] for acc in spec.accesses]
-                result_name = f"result_s{s}"
-                self._emit_stencil_expr_named(e, spec, term_names, result_name)
-
-                # Store
-                e.line(f"ct.store({out_name}, index=({idx_tuple}), tile={result_name})")
-
-    def _emit_stencil_expr_named(self, e: CodeEmitter, spec, term_names, result_var: str):
-        """Emit stencil expression assigning to a named result variable."""
-        try:
-            expr_src = transform_stencil_expr(
-                spec.update_fn, spec.accesses, spec.ndim, term_names
-            )
-            e.line(f"{result_var} = {expr_src}")
-        except Exception as exc:
-            warnings.warn(
-                f"AST transform failed for {spec.name}: {exc}. "
-                f"Generated kernel uses fallback sum expression.",
-                CodegenWarning,
-                stacklevel=2,
-            )
-            e.line("# WARNING: AST transform failed, using fallback sum")
-            e.line(f"{result_var} = {' + '.join(term_names)}")
-
     def _emit_temporal_launcher_nd(self, e, spec, ndim, tile_sizes, halo_widths, T):
-        """Emit launcher for temporal blocking kernel.
+        """Emit launcher for temporal blocking.
 
-        Allocates T-1 intermediate buffers and launches the temporal kernel.
-        Grid is based on ``n_expanded = shape - 2*halo`` per dimension.
+        Allocates T-1 intermediate buffers and launches the standard kernel
+        T times, swapping source/destination buffers each step.  Each kernel
+        launch acts as a global barrier, ensuring correctness.
+
+        All buffers have the same expanded shape ``N = n + 2*T*halo``.
+        The grid is based on ``n_expanded = N - 2*halo``.
+        After T steps only the central ``n`` elements are meaningful.
         """
         multi_input = len(spec.inputs) > 1
         t_vars = ["TX", "TY", "TZ"][:ndim]
@@ -410,10 +286,6 @@ class StencilCodeGenerator:
             with e.indent():
                 e.line("stream = cp.cuda.get_current_stream()")
 
-            # Allocate intermediate buffers (same shape as input)
-            for s in range(T - 1):
-                e.line(f"u_tmp{s} = cp.zeros_like({first_input})")
-
             # Grid based on n_expanded = shape - 2*halo per dim
             grid_parts = []
             for d in range(ndim):
@@ -421,24 +293,31 @@ class StencilCodeGenerator:
                 grid_parts.append(
                     f"ct.cdiv({first_input}.shape[{d}] - {2 * h}, {t_vars[d]})"
                 )
-            # Trailing comma for 1D so Python sees a tuple, not an int
             trailing = "," if ndim == 1 else ""
             e.line(f"grid = ({', '.join(grid_parts)}{trailing})")
 
-            # Build launch arguments
+            # Build buffer chain: u_in -> tmp0 -> tmp1 -> ... -> u_out
+            e.line(f"# Temporal blocking: {T} steps with buffer swapping")
+            e.line(f"bufs = [{first_input}]")
+            e.line(f"for _ in range({T - 1}):")
+            with e.indent():
+                e.line(f"bufs.append(cp.zeros_like({first_input}))")
+            e.line(f"bufs.append(u_out)")
+
+            # Launch kernel T times
             if multi_input:
                 args = ", ".join(spec.inputs)
+                e.line(f"for _step in range({T}):")
+                with e.indent():
+                    e.line(f"ct.launch(stream, grid, {spec.name}_kernel, "
+                           f"(bufs[_step], bufs[_step + 1], "
+                           f"{', '.join(t_vars)}, {', '.join(h_vars)}))")
             else:
-                args = "u_in"
-            tmp_args = ", ".join(f"u_tmp{s}" for s in range(T - 1))
-            if tmp_args:
-                tmp_args = ", " + tmp_args
-            t_args = ", ".join(t_vars)
-            h_args = ", ".join(h_vars)
-            e.line(
-                f"ct.launch(stream, grid, {spec.name}_temporal_kernel, "
-                f"({args}{tmp_args}, u_out, {t_args}, {h_args}))"
-            )
+                e.line(f"for _step in range({T}):")
+                with e.indent():
+                    e.line(f"ct.launch(stream, grid, {spec.name}_kernel, "
+                           f"(bufs[_step], bufs[_step + 1], "
+                           f"{', '.join(t_vars)}, {', '.join(h_vars)}))")
 
     # ------------------------------------------------------------------
     # Stencil expression emission
