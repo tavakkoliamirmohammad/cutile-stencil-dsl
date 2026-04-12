@@ -18,13 +18,16 @@ from cutile.frontend.decorator import stencil
 from cutile.runtime.launcher import compile as stencil_compile
 from cutile.reference.stencil_ref import apply_stencil, _ArrayProxy
 
-from conftest import gpu_required
-
 # Guard cupy import for environments without GPU
 try:
     import cupy as cp
-except ImportError:
+    cp.cuda.Device(0).compute_capability
+    _HAS_GPU = True
+except Exception:
+    _HAS_GPU = False
     cp = None
+
+gpu_required = pytest.mark.skipif(not _HAS_GPU, reason="No GPU available")
 
 
 # ===================================================================
