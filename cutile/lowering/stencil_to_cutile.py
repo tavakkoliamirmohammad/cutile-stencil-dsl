@@ -262,6 +262,7 @@ def _emit_kernel(
     meta: _StencilMeta,
     tile_sizes: tuple[int, ...],
     halo_widths: tuple[int, ...],
+    allow_tma: bool = True,
 ) -> None:
     """Emit the ``@ct.kernel`` function."""
     ndim = meta.ndim
@@ -324,10 +325,11 @@ def _emit_kernel(
         else:
             idx_arg = f"({idx_tuple})"
             shape_arg = f"({shape_tuple})"
+        tma_opt = ", allow_tma=False" if not allow_tma else ""
         for info in meta.accesses:
             e.line(
                 f"t_{info.view_name} = ct.load({info.view_name}, "
-                f"index={idx_arg}, shape={shape_arg})"
+                f"index={idx_arg}, shape={shape_arg}{tma_opt})"
             )
 
         e.blank()
@@ -336,7 +338,7 @@ def _emit_kernel(
         e.blank()
 
         # Store — ct.store(view, index, tile)
-        e.line(f"ct.store(out, index={idx_arg}, tile=result)")
+        e.line(f"ct.store(out, index={idx_arg}, tile=result{tma_opt})")
 
 
 def _emit_launcher(
@@ -565,6 +567,7 @@ def lower_stencil_to_python(
     halo_widths: tuple[int, ...] | None = None,
     temporal_steps: int = 1,
     boundary_spec: dict | None = None,
+    allow_tma: bool = True,
 ) -> str:
     """Lower a Dialect 1 stencil IR module to cuTile Python source code.
 
@@ -634,7 +637,7 @@ def lower_stencil_to_python(
     e.line("ConstInt = ct.Constant[int]")
     e.blank()
 
-    _emit_kernel(e, meta, tile_sizes, halo_widths)
+    _emit_kernel(e, meta, tile_sizes, halo_widths, allow_tma=allow_tma)
 
     if boundary_spec is not None:
         _emit_boundary(e, meta, halo_widths, boundary_spec)

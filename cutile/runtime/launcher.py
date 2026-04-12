@@ -194,6 +194,7 @@ def compile(
     layout: str | None = None,
     brick_size: int = 32,
     backend: str = "cutile",
+    allow_tma: bool = True,
 ) -> CompileResult:
     """Compile a ``@stencil``-decorated function through the pipeline.
 
@@ -370,6 +371,7 @@ def compile(
             halo_widths=halo_widths,
             temporal_steps=temporal_steps,
             boundary_spec=boundary_spec,
+            allow_tma=allow_tma,
         )
 
     return CompileResult(
