@@ -52,6 +52,8 @@ class StencilCodeGenerator:
                              self.tile.tile_sizes, self.tile.halo_widths)
         self._emit_launcher_nd(e, self.spec, ndim,
                                self.tile.tile_sizes, self.tile.halo_widths)
+        if self.spec.boundary is not None:
+            self._emit_boundary_fill_kernel(e)
         self._emit_benchmark_nd(e, self.spec, ndim,
                                 self.tile.tile_sizes, self.tile.halo_widths)
         return e.render()
@@ -142,8 +144,9 @@ class StencilCodeGenerator:
             # Load tiles
             shape_tuple = ", ".join(tile_vars)
             idx_tuple = ", ".join(bid_vars)
+            padding_arg = self._padding_arg()
             for vname, _, _ in access_names:
-                e.line(f"t_{vname} = ct.load({vname}, index=({idx_tuple}), shape=({shape_tuple}))")
+                e.line(f"t_{vname} = ct.load({vname}, index=({idx_tuple}), shape=({shape_tuple}){padding_arg})")
             e.blank()
             # Stencil expression
             offset_to_tile = {(arr, offs): f"t_{vn}" for vn, offs, arr in access_names}
@@ -189,6 +192,8 @@ class StencilCodeGenerator:
             t_args = ", ".join(t_vars)
             h_args = ", ".join(h_vars)
             e.line(f"ct.launch(stream, grid, {spec.name}_kernel, ({args}, u_out, {t_args}, {h_args}))")
+            if spec.boundary is not None:
+                e.line(f"apply_boundary_{spec.name}(u_out, stream=stream)")
 
     def _emit_benchmark_nd(self, e, spec, ndim, tile_sizes, halo_widths):
         """Emit an nD benchmark __main__ block."""
@@ -250,6 +255,8 @@ class StencilCodeGenerator:
         access_names = self._build_access_names(spec)
         # Emit the single-step kernel (reused for each temporal step)
         self._emit_kernel_nd(e, spec, access_names, ndim, tile_sizes, halo_widths)
+        if spec.boundary is not None:
+            self._emit_boundary_fill_kernel(e)
         # Emit temporal launcher that calls the kernel T times with buffer swaps
         self._emit_temporal_launcher_nd(e, spec, ndim, tile_sizes, halo_widths, T)
         return e.render()
@@ -312,6 +319,8 @@ class StencilCodeGenerator:
                 e.line(f"ct.launch(stream, grid, {spec.name}_kernel, "
                        f"(bufs[_step], bufs[_step + 1], "
                        f"{', '.join(t_vars)}, {', '.join(h_vars)}))")
+                if spec.boundary is not None:
+                    e.line(f"apply_boundary_{spec.name}(bufs[_step + 1], stream=stream)")
 
     # ------------------------------------------------------------------
     # Stencil expression emission
@@ -332,6 +341,94 @@ class StencilCodeGenerator:
             )
             e.line("# WARNING: AST transform failed, using fallback sum")
             e.line(f"result = {' + '.join(term_names)}")
+
+    # ------------------------------------------------------------------
+    # Boundary condition helpers
+    # ------------------------------------------------------------------
+    def _padding_arg(self) -> str:
+        """Return the padding_mode kwarg string for ct.load() if Dirichlet BC."""
+        if self.spec.boundary is None:
+            return ""
+        from cutile_stencil.dsl.boundary import BoundaryType
+        low_bc = self.spec.boundary.conditions[0][0]
+        if low_bc.bc_type == BoundaryType.DIRICHLET:
+            return ", padding_mode=ct.PaddingMode.ZERO"
+        return ""
+
+    def _emit_boundary_fill_kernel(self, e: CodeEmitter):
+        """Emit a boundary fill function for non-Dirichlet BCs."""
+        spec = self.spec
+        if spec.boundary is None:
+            return
+
+        from cutile_stencil.dsl.boundary import BoundaryType
+
+        ndim = spec.ndim
+        halo_widths = self.tile.halo_widths
+
+        e.blank()
+        e.blank()
+        e.line(f"def apply_boundary_{spec.name}(u, stream=None):")
+        with e.indent():
+            e.line('"""Apply boundary conditions to halo cells."""')
+            e.line("if stream is None:")
+            with e.indent():
+                e.line("stream = cp.cuda.get_current_stream()")
+
+            for d in range(ndim):
+                low_bc, high_bc = spec.boundary.conditions[d]
+                hw = halo_widths[d]
+
+                if low_bc.bc_type == BoundaryType.PERIODIC:
+                    e.line(f"# Dim {d}: periodic BC")
+                    if ndim == 1:
+                        e.line(f"u[:{hw}] = u[-2*{hw}:-{hw}]")
+                        e.line(f"u[-{hw}:] = u[{hw}:2*{hw}]")
+                    else:
+                        low_dst = ", ".join(":" if i != d else f":{hw}" for i in range(ndim))
+                        low_src = ", ".join(":" if i != d else f"-2*{hw}:-{hw}" for i in range(ndim))
+                        high_dst = ", ".join(":" if i != d else f"-{hw}:" for i in range(ndim))
+                        high_src = ", ".join(":" if i != d else f"{hw}:2*{hw}" for i in range(ndim))
+                        e.line(f"u[{low_dst}] = u[{low_src}]")
+                        e.line(f"u[{high_dst}] = u[{high_src}]")
+
+                elif low_bc.bc_type == BoundaryType.NEUMANN:
+                    e.line(f"# Dim {d}: Neumann BC (zero gradient)")
+                    if ndim == 1:
+                        e.line(f"u[:{hw}] = u[{hw}:{hw}+1]")
+                        e.line(f"u[-{hw}:] = u[-{hw}-1:-{hw}]")
+                    else:
+                        low_dst = ", ".join(":" if i != d else f":{hw}" for i in range(ndim))
+                        low_src = ", ".join(":" if i != d else f"{hw}:{hw}+1" for i in range(ndim))
+                        high_dst = ", ".join(":" if i != d else f"-{hw}:" for i in range(ndim))
+                        high_src = ", ".join(":" if i != d else f"-{hw}-1:-{hw}" for i in range(ndim))
+                        e.line(f"u[{low_dst}] = u[{low_src}]")
+                        e.line(f"u[{high_dst}] = u[{high_src}]")
+
+                elif low_bc.bc_type == BoundaryType.DIRICHLET:
+                    val = low_bc.value
+                    e.line(f"# Dim {d}: Dirichlet BC (value={val})")
+                    if ndim == 1:
+                        e.line(f"u[:{hw}] = {val}")
+                        e.line(f"u[-{hw}:] = {high_bc.value}")
+                    else:
+                        low_dst = ", ".join(":" if i != d else f":{hw}" for i in range(ndim))
+                        high_dst = ", ".join(":" if i != d else f"-{hw}:" for i in range(ndim))
+                        e.line(f"u[{low_dst}] = {val}")
+                        e.line(f"u[{high_dst}] = {high_bc.value}")
+
+                elif low_bc.bc_type == BoundaryType.REFLECTING:
+                    e.line(f"# Dim {d}: reflecting BC")
+                    if ndim == 1:
+                        e.line(f"u[:{hw}] = u[2*{hw}-1:{hw}-1:-1]")
+                        e.line(f"u[-{hw}:] = u[-{hw}-1:-2*{hw}-1:-1]")
+                    else:
+                        low_dst = ", ".join(":" if i != d else f":{hw}" for i in range(ndim))
+                        low_src = ", ".join(":" if i != d else f"2*{hw}-1:{hw}-1:-1" for i in range(ndim))
+                        high_dst = ", ".join(":" if i != d else f"-{hw}:" for i in range(ndim))
+                        high_src = ", ".join(":" if i != d else f"-{hw}-1:-2*{hw}-1:-1" for i in range(ndim))
+                        e.line(f"u[{low_dst}] = u[{low_src}]")
+                        e.line(f"u[{high_dst}] = u[{high_src}]")
 
     # ------------------------------------------------------------------
     # Bricked memory layout codegen
