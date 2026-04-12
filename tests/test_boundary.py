@@ -62,6 +62,14 @@ class TestBoundaryTypes:
         bs = BoundarySpec.neumann(2)
         assert bs.conditions[0][0].bc_type == BoundaryType.NEUMANN
 
+    def test_uniform_conditions_are_independent_objects(self):
+        """Each dimension's conditions tuple must be a distinct object."""
+        bs = BoundarySpec.uniform(BoundaryType.PERIODIC, 3)
+        assert len(bs.conditions) == 3
+        # List multiplication creates shared references; list comprehension doesn't
+        assert bs.conditions[0] is not bs.conditions[1]
+        assert bs.conditions[1] is not bs.conditions[2]
+
     def test_padding_mode_mapping(self):
         assert BoundarySpec.dirichlet(1).cuTile_padding_mode(0) == "ZERO"
         assert BoundarySpec.neumann(1).cuTile_padding_mode(0) == "CLAMP"

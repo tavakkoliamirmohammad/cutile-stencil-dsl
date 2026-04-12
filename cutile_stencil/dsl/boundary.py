@@ -34,7 +34,7 @@ class BoundarySpec:
     def uniform(cls, bc_type: BoundaryType, ndim: int, value: float = 0.0) -> BoundarySpec:
         """Create uniform BCs on all faces."""
         bc = BoundaryCondition(bc_type, value)
-        return cls(conditions=[(bc, bc)] * ndim)
+        return cls(conditions=[(bc, bc) for _ in range(ndim)])
 
     @classmethod
     def dirichlet(cls, ndim: int, value: float = 0.0) -> BoundarySpec:
