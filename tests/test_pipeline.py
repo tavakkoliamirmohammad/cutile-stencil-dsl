@@ -236,7 +236,7 @@ class TestCompile:
 
         result = compile(heat, domain=(1024,))
         assert ".slice(axis=" in result.code
-        assert "HALO" in result.code
+        assert "HX" in result.code
 
     def test_compile_importable_from_top_level(self):
         from cutile_stencil import compile, CompileResult

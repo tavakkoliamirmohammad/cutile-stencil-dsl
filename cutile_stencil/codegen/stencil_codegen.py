@@ -39,12 +39,20 @@ class StencilCodeGenerator:
     def emit(self) -> str:
         if self.layout is not None:
             return self._emit_bricked()
-        if self.spec.ndim == 1:
-            return self._emit_1d()
-        elif self.spec.ndim == 2:
-            return self._emit_2d()
-        else:
-            return self._emit_3d()
+        e = CodeEmitter()
+        self._emit_header(e)
+        e.blank()
+        e.line("ConstInt = ct.Constant[int]")
+        e.blank()
+        access_names = self._build_access_names(self.spec)
+        ndim = self.spec.ndim
+        self._emit_kernel_nd(e, self.spec, access_names, ndim,
+                             self.tile.tile_sizes, self.tile.halo_widths)
+        self._emit_launcher_nd(e, self.spec, ndim,
+                               self.tile.tile_sizes, self.tile.halo_widths)
+        self._emit_benchmark_nd(e, self.spec, ndim,
+                                self.tile.tile_sizes, self.tile.halo_widths)
+        return e.render()
 
     def emit_to_file(self, path: str | Path) -> None:
         path = Path(path)
@@ -89,136 +97,6 @@ class StencilCodeGenerator:
                 seen[key] = vname
                 access_names.append((vname, acc.offsets, acc.array_name))
         return access_names
-
-    # ------------------------------------------------------------------
-    # 1D: in-kernel .slice() approach
-    # ------------------------------------------------------------------
-    def _emit_1d(self) -> str:
-        e = CodeEmitter()
-        spec = self.spec
-        ts = self.tile.tile_sizes[0]
-        halo = self.tile.halo_widths[0]
-
-        self._emit_header(e)
-        e.blank()
-        e.line("ConstInt = ct.Constant[int]")
-        e.blank()
-
-        access_names = self._build_access_names(spec)
-
-        # Kernel
-        multi_input = len(spec.inputs) > 1
-        input_params = ", ".join(spec.inputs) if multi_input else spec.inputs[0]
-        e.line("@ct.kernel")
-        e.line(f"def {spec.name}_kernel({input_params}, output, TILE: ConstInt, HALO: ConstInt):")
-        with e.indent():
-            e.line("pid = ct.bid(0)")
-            # Compute interior size from first input array
-            first_arr = spec.inputs[0]
-            e.line(f"n = {first_arr}.shape[0] - 2 * HALO")
-            # Create sliced views for each unique access
-            for vname, offsets, arr_name in access_names:
-                off = offsets[0]
-                start = self._offset_expr("HALO", off)
-                stop = self._offset_expr("HALO", off, add_n=True)
-                e.line(f"{vname} = {arr_name}.slice(axis=0, start={start}, stop={stop})")
-            # Output view
-            e.line("out = output.slice(axis=0, start=HALO, stop=HALO + n)")
-            # Load tiles
-            for vname, _, _ in access_names:
-                e.line(f"t_{vname} = ct.load({vname}, index=(pid,), shape=(TILE,))")
-            # Stencil expression
-            self._emit_stencil_expr(e, access_names)
-            e.line("ct.store(out, index=(pid,), tile=result)")
-
-        self._emit_launcher_1d(e, ts, halo)
-        self._emit_benchmark_1d(e, ts, halo)
-        return e.render()
-
-    def _emit_launcher_1d(self, e: CodeEmitter, ts, halo):
-        e.blank()
-        e.blank()
-        spec = self.spec
-        multi_input = len(spec.inputs) > 1
-        if multi_input:
-            input_params = ", ".join(spec.inputs)
-            e.line(f"def launch_{spec.name}({input_params}, output, stream=None):")
-        else:
-            e.line(f"def launch_{spec.name}(u, output, stream=None):")
-        with e.indent():
-            e.line(f"TILE = {ts}")
-            e.line(f"HALO = {halo}")
-            first_input = spec.inputs[0] if multi_input else "u"
-            e.line(f"N = {first_input}.shape[0]")
-            e.line("if stream is None:")
-            with e.indent():
-                e.line("stream = cp.cuda.get_current_stream()")
-            e.line("n_interior = N - 2 * HALO")
-            e.line("grid = (ct.cdiv(n_interior, TILE),)")
-            if multi_input:
-                args = ", ".join(spec.inputs)
-            else:
-                args = "u"
-            e.line(f"ct.launch(stream, grid, {spec.name}_kernel, ({args}, output, TILE, HALO))")
-
-    def _emit_benchmark_1d(self, e: CodeEmitter, ts, halo):
-        e.blank()
-        e.blank()
-        e.line("if __name__ == '__main__':")
-        with e.indent():
-            e.line("import argparse")
-            e.line("import triton")
-            e.line("parser = argparse.ArgumentParser(add_help=False)")
-            e.line('parser.add_argument("--precision", type=str, default="float64")')
-            e.line("args, _ = parser.parse_known_args()")
-            e.line("dtype_map = {'float64': cp.float64, 'float32': cp.float32, 'float16': cp.float16}")
-            e.line("cp_dtype = dtype_map[args.precision]")
-            e.blank()
-            e.line(f"N = {self.bench.grid_1d} + 2 * {halo}")
-            e.line("u = cp.random.randn(N).astype(cp_dtype)")
-            e.line("out = cp.zeros_like(u)")
-            e.line(f"launch_{self.spec.name}(u, out)")
-            e.line("print('Kernel launched successfully')")
-
-    # ------------------------------------------------------------------
-    # 2D: in-kernel .slice() approach
-    # ------------------------------------------------------------------
-    def _emit_2d(self) -> str:
-        e = CodeEmitter()
-        spec = self.spec
-        tx, ty = self.tile.tile_sizes
-        hx, hy = self.tile.halo_widths
-
-        self._emit_header(e)
-        e.blank()
-        e.line("ConstInt = ct.Constant[int]")
-        e.blank()
-
-        access_names = self._build_access_names(spec)
-        self._emit_kernel_nd(e, spec, access_names, 2, (tx, ty), (hx, hy))
-        self._emit_launcher_nd(e, spec, 2, (tx, ty), (hx, hy))
-        self._emit_benchmark_nd(e, spec, 2, (tx, ty), (hx, hy))
-        return e.render()
-
-    # ------------------------------------------------------------------
-    # 3D: in-kernel .slice() approach
-    # ------------------------------------------------------------------
-    def _emit_3d(self) -> str:
-        e = CodeEmitter()
-        spec = self.spec
-        tx, ty, tz = self.tile.tile_sizes
-        hx, hy, hz = self.tile.halo_widths
-
-        self._emit_header(e)
-        e.blank()
-        e.line("ConstInt = ct.Constant[int]")
-        e.blank()
-
-        access_names = self._build_access_names(spec)
-        self._emit_kernel_nd(e, spec, access_names, 3, (tx, ty, tz), (hx, hy, hz))
-        self._emit_launcher_nd(e, spec, 3, (tx, ty, tz), (hx, hy, hz))
-        self._emit_benchmark_nd(e, spec, 3, (tx, ty, tz), (hx, hy, hz))
-        return e.render()
 
     # ------------------------------------------------------------------
     # Shared nD helpers: kernel, launcher, benchmark
@@ -290,14 +168,18 @@ class StencilCodeGenerator:
             e.line(f"{', '.join(t_vars)} = {', '.join(str(t) for t in tile_sizes)}")
             e.line(f"{', '.join(h_vars)} = {', '.join(str(h) for h in halo_widths)}")
             first_input = spec.inputs[0] if multi_input else "u_in"
-            e.line(f"{', '.join(n_vars)} = {first_input}.shape")
+            # Trailing comma for 1D to unpack single-element tuple from .shape
+            trailing = "," if ndim == 1 else ""
+            e.line(f"{', '.join(n_vars)}{trailing} = {first_input}.shape")
             e.line("if stream is None:")
             with e.indent():
                 e.line("stream = cp.cuda.get_current_stream()")
             grid_parts = ", ".join(
                 f"ct.cdiv({n_vars[d]} - 2 * {h_vars[d]}, {t_vars[d]})" for d in range(ndim)
             )
-            e.line(f"grid = ({grid_parts})")
+            # Trailing comma for 1D so Python sees a tuple, not a parenthesized expr
+            grid_trailing = "," if ndim == 1 else ""
+            e.line(f"grid = ({grid_parts}{grid_trailing})")
             if multi_input:
                 args = ", ".join(spec.inputs)
             else:
@@ -309,7 +191,7 @@ class StencilCodeGenerator:
     def _emit_benchmark_nd(self, e, spec, ndim, tile_sizes, halo_widths):
         """Emit an nD benchmark __main__ block."""
         h_vars = ["hx", "hy", "hz"][:ndim]
-        bench_grids = {2: self.bench.grid_2d, 3: self.bench.grid_3d}
+        bench_grids = {1: (self.bench.grid_1d,), 2: self.bench.grid_2d, 3: self.bench.grid_3d}
         e.blank()
         e.blank()
         e.line("if __name__ == '__main__':")
@@ -327,34 +209,6 @@ class StencilCodeGenerator:
     # ------------------------------------------------------------------
     # Stencil expression emission
     # ------------------------------------------------------------------
-    def _emit_stencil_expr(self, e: CodeEmitter, access_names):
-        """Build the arithmetic expression via AST transform (1D)."""
-        spec = self.spec
-        offset_to_tile = {}
-        for vname, offsets, arr_name in access_names:
-            offset_to_tile[(arr_name, offsets)] = f"t_{vname}"
-
-        term_names = []
-        for acc in spec.accesses:
-            key = (acc.array_name, acc.offsets)
-            term_names.append(offset_to_tile.get(key, "t_unknown"))
-
-        try:
-            expr_src = transform_stencil_expr(
-                spec.update_fn, spec.accesses, spec.ndim, term_names
-            )
-            e.line(f"result = {expr_src}")
-        except Exception as exc:
-            warnings.warn(
-                f"AST transform failed for {spec.name}: {exc}. "
-                f"Generated kernel uses fallback sum expression.",
-                CodegenWarning,
-                stacklevel=2,
-            )
-            e.line("# WARNING: AST transform failed, using fallback sum")
-            terms = [f"t_{vn}" for vn, _, _ in access_names]
-            e.line(f"result = {' + '.join(terms)}")
-
     def _emit_stencil_expr_nd(self, e: CodeEmitter, spec: StencilSpec, term_names):
         """Emit the stencil expression via AST transform (nD)."""
         try:
