@@ -615,3 +615,392 @@ class MultiGPUStencilCodeGenerator:
             e.line("# Captured constants from stencil definition scope")
             for name, value in sorted(consts.items()):
                 e.line(f"{name} = {value!r}")
+
+
+# ======================================================================
+# Approach A: P2P halo exchange launcher (kernel unchanged from single-GPU)
+# ======================================================================
+
+
+def emit_multigpu_p2p_launcher(
+    spec: StencilSpec,
+    decomposition: DomainDecomposition,
+) -> str:
+    """Generate a multi-GPU launcher with P2P halo exchange.
+
+    The kernel is the **standard single-GPU kernel** -- no modifications
+    needed.  Halo exchange happens before each kernel launch via CuPy
+    device-to-device P2P copies.
+
+    The generated module provides:
+
+    - ``setup_p2p(num_gpus)`` -- enable P2P access between all GPU pairs.
+    - ``exchange_halos_p2p(u_gpus, halo, split_axis)`` -- copy halo cells
+      from neighbor GPUs into each GPU's local padded array.
+    - ``run_stencil_step(u_gpus, out_gpus, launch_fn, halo, split_axis)``
+      -- one full timestep: exchange halos then launch the kernel on
+      every GPU.
+    - ``run_multigpu_p2p(launch_fn, global_input, num_gpus, halo,
+      split_axis, dtype, n_steps)`` -- end-to-end driver that decomposes,
+      exchanges, launches, and gathers the result.
+
+    Parameters
+    ----------
+    spec : StencilSpec
+        Stencil specification.
+    decomposition : DomainDecomposition
+        Domain decomposition describing how the domain is split.
+
+    Returns
+    -------
+    str
+        Python source code for the P2P launcher module.
+    """
+    e = CodeEmitter()
+    ndim = spec.ndim
+    split_axis = decomposition.split_axis
+    halo_widths = decomposition.halo_widths
+
+    # --- Header ---
+    e.line(
+        f'"""P2P halo-exchange launcher for {spec.name} '
+        f'stencil (auto-generated).'
+    )
+    e.blank()
+    e.line(
+        "Uses CuPy P2P device-to-device copies for halo exchange, then"
+    )
+    e.line("launches the standard single-GPU cuTile kernel on each GPU.")
+    e.line('"""')
+    e.blank()
+    e.line("import cupy as cp")
+    e.line("import numpy as np")
+    e.blank()
+
+    # Closure constants
+    consts = spec.closure_constants
+    if consts:
+        e.line("# Captured constants from stencil definition scope")
+        for name, value in sorted(consts.items()):
+            e.line(f"{name} = {value!r}")
+        e.blank()
+
+    # --- setup_p2p ---
+    e.line("def setup_p2p(num_gpus):")
+    with e.indent():
+        e.line('"""Enable P2P access between all GPU pairs."""')
+        e.line("for i in range(num_gpus):")
+        with e.indent():
+            e.line("cp.cuda.Device(i).use()")
+            e.line("for j in range(num_gpus):")
+            with e.indent():
+                e.line("if i != j:")
+                with e.indent():
+                    e.line("try:")
+                    with e.indent():
+                        e.line("cp.cuda.runtime.deviceEnablePeerAccess(j)")
+                    e.line("except cp.cuda.runtime.CUDARuntimeError:")
+                    with e.indent():
+                        e.line("pass")
+    e.blank()
+    e.blank()
+
+    # --- exchange_halos_p2p ---
+    # Generate for all ndim, but only exchange along split_axis
+    _emit_exchange_halos_p2p(e, ndim, split_axis, halo_widths)
+    e.blank()
+    e.blank()
+
+    # --- run_stencil_step ---
+    e.line(
+        "def run_stencil_step(u_gpus, out_gpus, launch_fn, "
+        "halo, split_axis=0):"
+    )
+    with e.indent():
+        e.line('"""One timestep: exchange halos, then launch on all GPUs."""')
+        e.line("n_gpus = len(u_gpus)")
+        e.line("exchange_halos_p2p(u_gpus, halo, split_axis)")
+        e.line("for rank in range(n_gpus):")
+        with e.indent():
+            e.line("cp.cuda.Device(rank).use()")
+            e.line("launch_fn(u_gpus[rank], out_gpus[rank])")
+        e.line("for rank in range(n_gpus):")
+        with e.indent():
+            e.line("cp.cuda.Device(rank).synchronize()")
+    e.blank()
+    e.blank()
+
+    # --- run_multigpu_p2p ---
+    split_halo = halo_widths[split_axis]
+    e.line(
+        f"def run_multigpu_p2p(launch_fn, global_input, "
+        f"num_gpus, n_steps=1, "
+        f"split_axis={split_axis}, halo={split_halo}):"
+    )
+    with e.indent():
+        e.line(
+            f'"""Run {spec.name} stencil across GPUs with P2P halo exchange.'
+        )
+        e.blank()
+        e.line("Parameters")
+        e.line("----------")
+        e.line("launch_fn : callable")
+        e.line("    The compiled single-GPU kernel launch function.")
+        e.line("global_input : numpy.ndarray")
+        e.line("    Full-domain padded input array (including global halo).")
+        e.line("num_gpus : int")
+        e.line("    Number of GPUs to use.")
+        e.line("n_steps : int")
+        e.line("    Number of stencil iterations.")
+        e.line("split_axis : int")
+        e.line("    Axis along which the domain is decomposed.")
+        e.line("halo : int")
+        e.line("    Halo width along the split axis.")
+        e.blank()
+        e.line("Returns")
+        e.line("-------")
+        e.line("numpy.ndarray")
+        e.line("    Gathered result as a numpy array (same shape as interior).")
+        e.line('"""')
+        e.line("setup_p2p(num_gpus)")
+        e.blank()
+
+        e.line("# Compute local extent along split axis")
+        e.line(f"global_interior = global_input.shape[split_axis] - 2 * halo")
+        e.line("assert global_interior % num_gpus == 0, (")
+        with e.indent():
+            e.line(
+                "f'Interior size {global_interior} not divisible "
+                "by {num_gpus}'"
+            )
+        e.line(")")
+        e.line("local_n = global_interior // num_gpus")
+        e.blank()
+
+        e.line("# Decompose global input into per-GPU padded sub-arrays")
+        e.line("u_gpus = []")
+        e.line("out_gpus = []")
+        e.line("for rank in range(num_gpus):")
+        with e.indent():
+            e.line("cp.cuda.Device(rank).use()")
+            e.line("start = rank * local_n")
+            e.line("# Extract local_n + 2*halo slice from global array")
+            if ndim == 1:
+                e.line(
+                    "chunk = global_input[start : start + local_n + 2 * halo]"
+                )
+            else:
+                slices = []
+                for d in range(ndim):
+                    if d == split_axis:
+                        slices.append("start : start + local_n + 2 * halo")
+                    else:
+                        slices.append(":")
+                e.line(f"chunk = global_input[{', '.join(slices)}]")
+            e.line("u_gpus.append(cp.asarray(chunk))")
+            e.line("out_gpus.append(cp.zeros_like(u_gpus[-1]))")
+        e.blank()
+
+        e.line("# Run stencil iterations")
+        e.line("for step in range(n_steps):")
+        with e.indent():
+            e.line("run_stencil_step(u_gpus, out_gpus, launch_fn, halo, split_axis)")
+            e.line("# Swap input/output for next step")
+            e.line("for rank in range(num_gpus):")
+            with e.indent():
+                e.line("cp.cuda.Device(rank).use()")
+                # Copy interior from output back to input
+                if ndim == 1:
+                    e.line("u_gpus[rank][halo:-halo] = out_gpus[rank][halo:-halo]")
+                else:
+                    interior_slices = []
+                    for d in range(ndim):
+                        if d == split_axis:
+                            interior_slices.append("halo:-halo")
+                        else:
+                            interior_slices.append(":")
+                    sl = ", ".join(interior_slices)
+                    e.line(f"u_gpus[rank][{sl}] = out_gpus[rank][{sl}]")
+        e.blank()
+
+        e.line("# Gather results from all GPUs")
+        e.line("parts = []")
+        e.line("for rank in range(num_gpus):")
+        with e.indent():
+            e.line("cp.cuda.Device(rank).use()")
+            if ndim == 1:
+                e.line("parts.append(cp.asnumpy(u_gpus[rank][halo:-halo]))")
+            else:
+                interior_slices = []
+                for d in range(ndim):
+                    if d == split_axis:
+                        interior_slices.append("halo:-halo")
+                    else:
+                        halo_d = halo_widths[d]
+                        interior_slices.append(f"{halo_d}:-{halo_d}")
+                sl = ", ".join(interior_slices)
+                e.line(f"parts.append(cp.asnumpy(u_gpus[rank][{sl}]))")
+        e.line(f"return np.concatenate(parts, axis={split_axis})")
+
+    return e.render()
+
+
+def _emit_exchange_halos_p2p(
+    e: CodeEmitter,
+    ndim: int,
+    split_axis: int,
+    halo_widths: tuple,
+):
+    """Emit the exchange_halos_p2p function.
+
+    Copies halo cells from neighbor GPUs along the split axis using
+    CuPy's ``MemoryPointer.copy_from_device()`` for P2P transfer.
+    """
+    split_halo = halo_widths[split_axis]
+
+    e.line(f"def exchange_halos_p2p(u_gpus, halo={split_halo}, split_axis={split_axis}):")
+    with e.indent():
+        e.line('"""Exchange halo cells between neighbor GPUs via P2P copy."""')
+        e.line("n_gpus = len(u_gpus)")
+        e.line("dtype_bytes = u_gpus[0].dtype.itemsize")
+        e.blank()
+
+        e.line("for rank in range(n_gpus):")
+        with e.indent():
+            e.line("cp.cuda.Device(rank).use()")
+            e.blank()
+
+            # Build the slicing expressions based on ndim and split_axis.
+            # For N-D arrays, we need to compute contiguous byte sizes
+            # and slice along the split axis.
+            if ndim == 1:
+                # 1D: simple direct copy
+                e.line("nbytes = halo * dtype_bytes")
+                e.blank()
+                e.line("# Copy from left neighbor's right interior")
+                e.line("if rank > 0:")
+                with e.indent():
+                    e.line(
+                        "u_gpus[rank][:halo].data.copy_from_device("
+                    )
+                    with e.indent():
+                        e.line(
+                            "u_gpus[rank - 1][-2 * halo : -halo].data, nbytes"
+                        )
+                    e.line(")")
+                e.blank()
+                e.line("# Copy from right neighbor's left interior")
+                e.line("if rank < n_gpus - 1:")
+                with e.indent():
+                    e.line(
+                        "u_gpus[rank][-halo:].data.copy_from_device("
+                    )
+                    with e.indent():
+                        e.line(
+                            "u_gpus[rank + 1][halo : 2 * halo].data, nbytes"
+                        )
+                    e.line(")")
+            else:
+                # N-D: use slicing and contiguous copy.
+                # We need contiguous slabs along the split axis.
+                e.line("local_shape = u_gpus[rank].shape")
+                e.line(
+                    "# Number of elements in one halo slab "
+                    "along the split axis"
+                )
+                # Compute slab_size = product of all dims except split * halo
+                slab_parts = []
+                for d in range(ndim):
+                    if d != split_axis:
+                        slab_parts.append(f"local_shape[{d}]")
+                if slab_parts:
+                    e.line(
+                        f"slab_elements = halo * "
+                        f"{' * '.join(slab_parts)}"
+                    )
+                else:
+                    e.line("slab_elements = halo")
+                e.line("slab_bytes = slab_elements * dtype_bytes")
+                e.blank()
+
+                # Build slice tuples for source and destination
+                def _make_slab_slice(axis_slice, as_str=True):
+                    """Create a tuple of slice strings for an N-D array."""
+                    parts = []
+                    for d in range(ndim):
+                        if d == split_axis:
+                            parts.append(axis_slice)
+                        else:
+                            parts.append(":")
+                    return ", ".join(parts)
+
+                e.line("# Copy from left neighbor's right interior")
+                e.line("if rank > 0:")
+                with e.indent():
+                    dst_sl = _make_slab_slice(":halo")
+                    src_sl = _make_slab_slice("-2 * halo : -halo")
+                    e.line(
+                        f"dst = u_gpus[rank][{dst_sl}]"
+                    )
+                    e.line(
+                        f"src = u_gpus[rank - 1][{src_sl}]"
+                    )
+                    e.line(
+                        "dst.data.copy_from_device("
+                        "src.data, slab_bytes)"
+                    )
+                e.blank()
+
+                e.line("# Copy from right neighbor's left interior")
+                e.line("if rank < n_gpus - 1:")
+                with e.indent():
+                    dst_sl = _make_slab_slice("-halo:")
+                    src_sl = _make_slab_slice("halo : 2 * halo")
+                    e.line(
+                        f"dst = u_gpus[rank][{dst_sl}]"
+                    )
+                    e.line(
+                        f"src = u_gpus[rank + 1][{src_sl}]"
+                    )
+                    e.line(
+                        "dst.data.copy_from_device("
+                        "src.data, slab_bytes)"
+                    )
+
+
+# ======================================================================
+# Approach B: ct.gather-based in-kernel halo loading (convenience wrapper)
+# ======================================================================
+
+
+def emit_multigpu_gather_kernel(
+    spec: StencilSpec,
+    tile_config: TileConfig,
+    decomposition: DomainDecomposition,
+) -> str:
+    """Generate a kernel that loads halo directly from peer GPU memory.
+
+    The kernel receives a list of per-GPU arrays. For tiles at partition
+    boundaries, it reads from the neighbor's array using ``ct.gather()``
+    / ``ct.load()`` with a peer-array view.  No pre-kernel copy needed.
+
+    This is a convenience wrapper around
+    :class:`MultiGPUStencilCodeGenerator`.
+
+    Parameters
+    ----------
+    spec : StencilSpec
+        Stencil specification with accesses and halo widths populated.
+    tile_config : TileConfig
+        Tile sizes and halo widths for the kernel.
+    decomposition : DomainDecomposition
+        Domain decomposition describing how the domain is split.
+
+    Returns
+    -------
+    str
+        Python source code containing the cuTile kernel + launcher that
+        does in-kernel halo reads from peer arrays via ``ct.gather()``.
+    """
+    gen = MultiGPUStencilCodeGenerator(spec, tile_config, decomposition)
+    return gen.emit()

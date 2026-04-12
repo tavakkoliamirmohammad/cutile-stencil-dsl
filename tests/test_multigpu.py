@@ -1231,3 +1231,264 @@ class TestCartesianGPUValidation:
     def test_topology_2x1(self):
         """Split along axis 0 only (2 rows)."""
         self._run_cartesian_2d(topology=(2, 1))
+
+
+# =====================================================================
+# P2P Launcher Code Generation Tests (pure Python)
+# =====================================================================
+
+from cutile_stencil.multigpu.codegen import (
+    emit_multigpu_p2p_launcher,
+    emit_multigpu_gather_kernel,
+)
+
+
+class TestP2PLauncherCodegen:
+    """Test that the P2P halo-exchange launcher generates valid Python."""
+
+    def test_1d_valid_python(self):
+        spec, _ = _make_1d_spec()
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=spec.halo_widths)
+        code = emit_multigpu_p2p_launcher(spec, decomp)
+        ast.parse(code)
+
+    def test_2d_valid_python(self):
+        spec, _ = _make_2d_spec()
+        decomp = decompose(
+            domain=(256, 256), num_gpus=2, halo_widths=spec.halo_widths,
+        )
+        code = emit_multigpu_p2p_launcher(spec, decomp)
+        ast.parse(code)
+
+    def test_3d_valid_python(self):
+        spec, _ = _make_3d_spec()
+        decomp = decompose(
+            domain=(64, 64, 64), num_gpus=2, halo_widths=spec.halo_widths,
+        )
+        code = emit_multigpu_p2p_launcher(spec, decomp)
+        ast.parse(code)
+
+    def test_1d_contains_setup_p2p(self):
+        spec, _ = _make_1d_spec()
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=spec.halo_widths)
+        code = emit_multigpu_p2p_launcher(spec, decomp)
+        assert "def setup_p2p" in code
+
+    def test_1d_contains_exchange_halos(self):
+        spec, _ = _make_1d_spec()
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=spec.halo_widths)
+        code = emit_multigpu_p2p_launcher(spec, decomp)
+        assert "def exchange_halos_p2p" in code
+
+    def test_1d_contains_run_stencil_step(self):
+        spec, _ = _make_1d_spec()
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=spec.halo_widths)
+        code = emit_multigpu_p2p_launcher(spec, decomp)
+        assert "def run_stencil_step" in code
+
+    def test_1d_contains_run_multigpu_p2p(self):
+        spec, _ = _make_1d_spec()
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=spec.halo_widths)
+        code = emit_multigpu_p2p_launcher(spec, decomp)
+        assert "def run_multigpu_p2p" in code
+
+    def test_1d_contains_p2p_copy_calls(self):
+        spec, _ = _make_1d_spec()
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=spec.halo_widths)
+        code = emit_multigpu_p2p_launcher(spec, decomp)
+        assert "copy_from_device" in code
+
+    def test_1d_contains_deviceEnablePeerAccess(self):
+        spec, _ = _make_1d_spec()
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=spec.halo_widths)
+        code = emit_multigpu_p2p_launcher(spec, decomp)
+        assert "deviceEnablePeerAccess" in code
+
+    def test_2d_split_axis_0(self):
+        spec, _ = _make_2d_spec()
+        decomp = decompose(
+            domain=(256, 256), num_gpus=4, halo_widths=spec.halo_widths,
+            split_axis=0,
+        )
+        code = emit_multigpu_p2p_launcher(spec, decomp)
+        ast.parse(code)
+        assert "copy_from_device" in code
+
+    def test_2d_split_axis_1(self):
+        spec, _ = _make_2d_spec()
+        decomp = decompose(
+            domain=(256, 256), num_gpus=4, halo_widths=spec.halo_widths,
+            split_axis=1,
+        )
+        code = emit_multigpu_p2p_launcher(spec, decomp)
+        ast.parse(code)
+
+    def test_4_gpus_valid_python(self):
+        spec, _ = _make_1d_spec()
+        decomp = decompose(domain=(2048,), num_gpus=4, halo_widths=spec.halo_widths)
+        code = emit_multigpu_p2p_launcher(spec, decomp)
+        ast.parse(code)
+
+    def test_references_stencil_name(self):
+        spec, _ = _make_1d_spec()
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=spec.halo_widths)
+        code = emit_multigpu_p2p_launcher(spec, decomp)
+        assert spec.name in code
+
+
+# =====================================================================
+# Gather Kernel Convenience Wrapper Tests
+# =====================================================================
+
+
+class TestGatherKernelWrapper:
+    """Test that emit_multigpu_gather_kernel() produces valid Python."""
+
+    def test_1d_valid_python(self):
+        spec, tile_cfg = _make_1d_spec()
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=spec.halo_widths)
+        code = emit_multigpu_gather_kernel(spec, tile_cfg, decomp)
+        ast.parse(code)
+
+    def test_2d_valid_python(self):
+        spec, tile_cfg = _make_2d_spec()
+        decomp = decompose(domain=(256, 256), num_gpus=2, halo_widths=spec.halo_widths)
+        code = emit_multigpu_gather_kernel(spec, tile_cfg, decomp)
+        ast.parse(code)
+
+    def test_3d_valid_python(self):
+        spec, tile_cfg = _make_3d_spec()
+        decomp = decompose(domain=(64, 64, 64), num_gpus=2, halo_widths=spec.halo_widths)
+        code = emit_multigpu_gather_kernel(spec, tile_cfg, decomp)
+        ast.parse(code)
+
+    def test_1d_contains_peer_arrays(self):
+        spec, tile_cfg = _make_1d_spec()
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=spec.halo_widths)
+        code = emit_multigpu_gather_kernel(spec, tile_cfg, decomp)
+        assert "peer_arrays" in code
+
+    def test_1d_contains_gather_or_load(self):
+        spec, tile_cfg = _make_1d_spec()
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=spec.halo_widths)
+        code = emit_multigpu_gather_kernel(spec, tile_cfg, decomp)
+        assert "ct.gather" in code or "ct.load" in code
+
+    def test_matches_class_output(self):
+        """emit_multigpu_gather_kernel is a wrapper for MultiGPUStencilCodeGenerator."""
+        spec, tile_cfg = _make_1d_spec()
+        decomp = decompose(domain=(1024,), num_gpus=2, halo_widths=spec.halo_widths)
+        code_wrapper = emit_multigpu_gather_kernel(spec, tile_cfg, decomp)
+        gen = MultiGPUStencilCodeGenerator(spec, tile_cfg, decomp)
+        code_class = gen.emit()
+        assert code_wrapper == code_class
+
+
+# =====================================================================
+# Import / export tests
+# =====================================================================
+
+
+class TestMultiGPUExports:
+    """Verify that the new exports are importable from the package."""
+
+    def test_import_p2p_launcher(self):
+        from cutile_stencil.multigpu import emit_multigpu_p2p_launcher
+        assert emit_multigpu_p2p_launcher is not None
+
+    def test_import_gather_kernel(self):
+        from cutile_stencil.multigpu import emit_multigpu_gather_kernel
+        assert emit_multigpu_gather_kernel is not None
+
+    def test_all_exports(self):
+        from cutile_stencil.multigpu import __all__
+        assert "emit_multigpu_p2p_launcher" in __all__
+        assert "emit_multigpu_gather_kernel" in __all__
+
+
+# =====================================================================
+# GPU Integration: P2P launcher end-to-end test
+# =====================================================================
+
+
+def _run_p2p_launcher_1d(n_gpus, n_steps=10):
+    """Run 1D heat stencil using the generated P2P launcher, verify vs CPU."""
+    import numpy as np
+    from cutile_stencil import compile as stencil_compile
+    from cutile_stencil.reference.stencil_ref import apply_stencil
+    import importlib.util
+    import tempfile
+
+    @stencil(ndim=1, order=2)
+    def heat_p2p(u, i):
+        return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
+
+    spec = heat_p2p._stencil_spec
+
+    halo = 1
+    local_n = 256
+    global_n = local_n * n_gpus
+
+    # Compile the standard single-GPU kernel
+    result = stencil_compile(heat_p2p, domain=(local_n,))
+    tmp_kernel = tempfile.NamedTemporaryFile(
+        suffix=".py", delete=False, mode="w"
+    )
+    tmp_kernel.write(result.code)
+    tmp_kernel.close()
+    mod_spec = importlib.util.spec_from_file_location("_k", tmp_kernel.name)
+    mod = importlib.util.module_from_spec(mod_spec)
+    mod_spec.loader.exec_module(mod)
+    launch_fn = getattr(mod, f"launch_{spec.name}")
+
+    # Generate and load the P2P launcher module
+    decomp = decompose(
+        domain=(global_n,), num_gpus=n_gpus, halo_widths=spec.halo_widths,
+    )
+    launcher_code = emit_multigpu_p2p_launcher(spec, decomp)
+    tmp_launcher = tempfile.NamedTemporaryFile(
+        suffix=".py", delete=False, mode="w"
+    )
+    tmp_launcher.write(launcher_code)
+    tmp_launcher.close()
+    lmod_spec = importlib.util.spec_from_file_location(
+        "_launcher", tmp_launcher.name
+    )
+    lmod = importlib.util.module_from_spec(lmod_spec)
+    lmod_spec.loader.exec_module(lmod)
+
+    # Prepare global input
+    np.random.seed(42)
+    u_global = np.random.randn(global_n + 2 * halo).astype(np.float64)
+
+    # Run using the generated P2P launcher
+    gpu_result = lmod.run_multigpu_p2p(
+        launch_fn, u_global, n_gpus, n_steps=n_steps,
+    )
+
+    # CPU reference
+    u_cpu = u_global.copy()
+    for _ in range(n_steps):
+        u_cpu = apply_stencil(u_cpu, spec)
+    cpu_interior = u_cpu[halo:-halo]
+
+    return np.allclose(gpu_result, cpu_interior, atol=1e-10)
+
+
+@multi_gpu_required
+class TestMultiGPUP2PLauncher:
+    """GPU integration: P2P launcher compiles kernel, runs on multiple GPUs."""
+
+    def test_1d_2_gpus(self):
+        assert _run_p2p_launcher_1d(2, n_steps=10)
+
+    def test_1d_3_gpus(self):
+        if _NUM_GPUS < 3:
+            pytest.skip("Need >= 3 GPUs")
+        assert _run_p2p_launcher_1d(3, n_steps=10)
+
+    def test_1d_4_gpus(self):
+        if _NUM_GPUS < 4:
+            pytest.skip("Need >= 4 GPUs")
+        assert _run_p2p_launcher_1d(4, n_steps=10)
+
