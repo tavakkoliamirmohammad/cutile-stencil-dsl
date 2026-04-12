@@ -9,6 +9,10 @@ from cutile_stencil.multigpu.decomposition import (
     Partition,
     DomainDecomposition,
     decompose,
+    CartesianPartition,
+    CartesianDecomposition,
+    decompose_cartesian,
+    _factorize_gpus,
 )
 from cutile_stencil.multigpu.codegen import MultiGPUStencilCodeGenerator
 from cutile_stencil.multigpu.launcher import emit_multigpu_launcher
@@ -22,6 +26,10 @@ __all__ = [
     "Partition",
     "DomainDecomposition",
     "decompose",
+    "CartesianPartition",
+    "CartesianDecomposition",
+    "decompose_cartesian",
+    "_factorize_gpus",
     "MultiGPUStencilCodeGenerator",
     "emit_multigpu_launcher",
     "HaloExchangePlan",

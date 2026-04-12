@@ -1,12 +1,16 @@
 """Domain decomposition for multi-GPU stencil computations.
 
-Pure Python module -- no GPU imports at module level. Splits a global
-domain across GPUs along a single axis (1D decomposition). Each GPU
-owns an interior subdomain and its neighbors provide halo ghost cells.
+Pure Python module -- no GPU imports at module level. Supports:
+- 1D decomposition: splits a global domain along a single axis.
+- Cartesian decomposition: splits across a 2D or 3D grid of GPUs.
+
+Each GPU owns an interior subdomain and its neighbors provide halo ghost cells.
 """
 
 from __future__ import annotations
 
+import itertools
+import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -191,3 +195,237 @@ def decompose(
 def _choose_split_axis(domain: Tuple[int, ...]) -> int:
     """Choose the axis with the largest extent for splitting."""
     return max(range(len(domain)), key=lambda d: domain[d])
+
+
+# =====================================================================
+# Cartesian (2D / 3D) Domain Decomposition
+# =====================================================================
+
+
+@dataclass(frozen=True)
+class CartesianPartition:
+    """A single GPU's subdomain in a Cartesian decomposition.
+
+    Attributes
+    ----------
+    rank : int
+        Linear GPU rank (0-based) within the Cartesian grid.
+    coords : tuple of int
+        Position of this partition in the Cartesian topology,
+        e.g. ``(0, 1)`` for row 0, column 1 in a 2-D grid.
+    global_domain : tuple of int
+        Full domain size (interior points per dimension).
+    local_domain : tuple of int
+        Interior points this GPU owns per dimension.
+    local_offset : tuple of int
+        Start index of this partition in the global domain.
+    neighbors : dict
+        Mapping ``(axis, direction) -> rank | None``.
+        *axis* is the dimension index; *direction* is ``-1`` (left/up)
+        or ``+1`` (right/down).  ``None`` indicates a domain boundary.
+    halo_widths : tuple of int
+        Halo width per dimension (same as the global stencil halo).
+    """
+
+    rank: int
+    coords: Tuple[int, ...]
+    global_domain: Tuple[int, ...]
+    local_domain: Tuple[int, ...]
+    local_offset: Tuple[int, ...]
+    neighbors: Dict[Tuple[int, int], Optional[int]]
+    halo_widths: Tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class CartesianDecomposition:
+    """Domain decomposition across a Cartesian grid of GPUs.
+
+    Attributes
+    ----------
+    global_domain : tuple of int
+        Full domain size (interior points per dimension).
+    topology : tuple of int
+        Number of GPU partitions per axis, e.g. ``(2, 2)`` for a
+        2-by-2 grid of 4 GPUs in 2-D.
+    num_gpus : int
+        Total number of GPUs (equals ``math.prod(topology)``).
+    partitions : list of CartesianPartition
+        One partition per GPU, ordered by their linearised rank.
+    halo_widths : tuple of int
+        Halo widths per dimension (from the stencil spec).
+    """
+
+    global_domain: Tuple[int, ...]
+    topology: Tuple[int, ...]
+    num_gpus: int
+    partitions: List[CartesianPartition]
+    halo_widths: Tuple[int, ...]
+
+
+def _factorize_gpus(num_gpus: int, ndim: int) -> Tuple[int, ...]:
+    """Find the most balanced Cartesian grid for *num_gpus* across *ndim* axes.
+
+    The returned topology is sorted in ascending order so that the
+    smallest number of partitions is along axis 0.
+
+    Examples
+    --------
+    >>> _factorize_gpus(4, 2)
+    (2, 2)
+    >>> _factorize_gpus(8, 3)
+    (2, 2, 2)
+    >>> _factorize_gpus(6, 2)
+    (2, 3)
+    >>> _factorize_gpus(6, 3)
+    (1, 2, 3)
+    """
+    if ndim == 1:
+        return (num_gpus,)
+
+    if ndim == 2:
+        # Find factor pair (i, j) with i <= j closest to sqrt(num_gpus)
+        best = (1, num_gpus)
+        for i in range(1, int(num_gpus ** 0.5) + 1):
+            if num_gpus % i == 0:
+                j = num_gpus // i
+                if max(i, j) - min(i, j) < max(best) - min(best):
+                    best = (i, j)
+        return best
+
+    if ndim == 3:
+        best = (1, 1, num_gpus)
+        best_diff = num_gpus
+        for i in range(1, num_gpus + 1):
+            if num_gpus % i != 0:
+                continue
+            rem = num_gpus // i
+            for j in range(1, int(rem ** 0.5) + 1):
+                if rem % j == 0:
+                    k = rem // j
+                    diff = max(i, j, k) - min(i, j, k)
+                    if diff < best_diff:
+                        best_diff = diff
+                        best = tuple(sorted([i, j, k]))
+        return best
+
+    raise ValueError(f"ndim={ndim} not supported for Cartesian decomposition")
+
+
+def decompose_cartesian(
+    domain: Tuple[int, ...],
+    num_gpus: int,
+    halo_widths: Tuple[int, ...],
+    topology: Optional[Tuple[int, ...]] = None,
+    periodic: bool = False,
+) -> CartesianDecomposition:
+    """Decompose *domain* across a Cartesian grid of GPUs.
+
+    Parameters
+    ----------
+    domain : tuple of int
+        Global domain size (interior points per dimension).
+    num_gpus : int
+        Total number of GPUs.
+    halo_widths : tuple of int
+        Halo width per dimension.
+    topology : tuple of int, optional
+        Number of GPU partitions per axis.  If ``None``, the topology
+        is auto-computed for maximum balance.  The product of all
+        elements must equal *num_gpus*.
+    periodic : bool
+        If ``True``, boundary partitions wrap around to the opposite
+        side (periodic / toroidal boundary conditions).
+
+    Returns
+    -------
+    CartesianDecomposition
+
+    Raises
+    ------
+    ValueError
+        If topology product != num_gpus, a domain dimension is not
+        evenly divisible by the corresponding topology entry, or a
+        local subdomain is too small to accommodate the halo.
+    """
+    ndim = len(domain)
+
+    if len(halo_widths) != ndim:
+        raise ValueError(
+            f"halo_widths has {len(halo_widths)} dims, expected {ndim}"
+        )
+
+    if topology is None:
+        topology = _factorize_gpus(num_gpus, ndim)
+
+    if len(topology) != ndim:
+        raise ValueError(
+            f"topology has {len(topology)} dims, expected {ndim}"
+        )
+
+    if math.prod(topology) != num_gpus:
+        raise ValueError(
+            f"Product of topology {topology} = {math.prod(topology)}, "
+            f"expected {num_gpus}"
+        )
+
+    # Check even divisibility per axis
+    for d in range(ndim):
+        if domain[d] % topology[d] != 0:
+            raise ValueError(
+                f"domain[{d}]={domain[d]} not divisible by "
+                f"topology[{d}]={topology[d]}"
+            )
+
+    local_sizes = tuple(domain[d] // topology[d] for d in range(ndim))
+
+    # Ensure local subdomains are large enough for halos
+    for d in range(ndim):
+        if topology[d] > 1 and local_sizes[d] < 2 * halo_widths[d]:
+            raise ValueError(
+                f"local_size[{d}]={local_sizes[d]} < 2*halo={2 * halo_widths[d]}"
+            )
+
+    # Enumerate all Cartesian coordinates in row-major order so that
+    # rank == flat index of coords in topology.
+    all_coords = list(itertools.product(*(range(t) for t in topology)))
+
+    partitions: List[CartesianPartition] = []
+    for rank, coords in enumerate(all_coords):
+        offset = tuple(coords[d] * local_sizes[d] for d in range(ndim))
+
+        # Build neighbor map: (axis, direction) -> rank | None
+        neighbors: Dict[Tuple[int, int], Optional[int]] = {}
+        for d in range(ndim):
+            for direction in (-1, +1):
+                neighbor_coords = list(coords)
+                neighbor_coords[d] += direction
+
+                if 0 <= neighbor_coords[d] < topology[d]:
+                    n_rank = all_coords.index(tuple(neighbor_coords))
+                    neighbors[(d, direction)] = n_rank
+                elif periodic:
+                    neighbor_coords[d] = neighbor_coords[d] % topology[d]
+                    n_rank = all_coords.index(tuple(neighbor_coords))
+                    neighbors[(d, direction)] = n_rank
+                else:
+                    neighbors[(d, direction)] = None
+
+        partitions.append(
+            CartesianPartition(
+                rank=rank,
+                coords=coords,
+                global_domain=domain,
+                local_domain=local_sizes,
+                local_offset=offset,
+                neighbors=neighbors,
+                halo_widths=halo_widths,
+            )
+        )
+
+    return CartesianDecomposition(
+        global_domain=domain,
+        topology=topology,
+        num_gpus=num_gpus,
+        partitions=partitions,
+        halo_widths=halo_widths,
+    )
