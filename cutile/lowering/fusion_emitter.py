@@ -4,6 +4,10 @@ Multi-field stencils (e.g. Gray-Scott u/v updates) that read overlapping
 input data are compiled into a single ``@ct.kernel`` that loads shared data
 once and computes all outputs, eliminating redundant global memory traffic.
 
+The fused kernel and launcher are generated through Dialect 3 (cutile_target)
+IR: a ``KernelOp`` with merged accesses and multiple stores is built, then
+emitted via ``emit_python``.
+
 Public API
 ----------
 lower_fused_stencils_to_python(modules, tile_sizes, halo_widths, temporal_steps)
@@ -14,10 +18,15 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from xdsl.dialects.builtin import ModuleOp
+from xdsl.dialects.builtin import (
+    ArrayAttr,
+    IntAttr,
+    ModuleOp,
+    StringAttr,
+)
+from xdsl.ir import Block, Region
 
 from cutile.dialects.cutile_stencil.dialect import FuncOp
-from cutile.lowering.emitter import CodeEmitter
 from cutile.lowering.stencil_to_cutile import (
     _AccessInfo,
     _StencilMeta,
@@ -25,10 +34,25 @@ from cutile.lowering.stencil_to_cutile import (
     _format_offset,
     _offset_expr,
 )
+from cutile.dialects.cutile_target.dialect import (
+    BidOp,
+    ForLoopOp,
+    HostProgramOp,
+    KernelOp,
+    LaunchOp,
+    LoadOp,
+    ReturnOp,
+    SliceOp,
+    StoreOp,
+)
+from cutile.lowering.target_to_python import emit_python
+from xdsl.dialects.builtin import IndexType
 
 # -------------------------------------------------------------------- #
 # Internal helpers
 # -------------------------------------------------------------------- #
+
+_IDX = IndexType()
 
 
 def _find_func_and_block(module: ModuleOp):
@@ -100,30 +124,11 @@ def _remap_expression(
 
 
 # -------------------------------------------------------------------- #
-# Fused code emission
+# Dialect 3 IR builders for fused kernels
 # -------------------------------------------------------------------- #
 
 
-def _emit_fused_header(
-    e: CodeEmitter,
-    fused_name: str,
-    all_constants: dict[str, float],
-) -> None:
-    """Emit module header for fused kernel."""
-    e.line(f'"""cuTile fused kernel for {fused_name} (auto-generated)."""')
-    e.blank()
-    e.line("import cuda.tile as ct")
-    e.line("import cupy as cp")
-
-    if all_constants:
-        e.blank()
-        e.line("# Captured constants from stencil definition scope")
-        for name, value in sorted(all_constants.items()):
-            e.line(f"{name} = {value!r}")
-
-
-def _emit_fused_kernel(
-    e: CodeEmitter,
+def _build_fused_kernel_body(
     fused_name: str,
     ndim: int,
     global_input_names: list[str],
@@ -132,8 +137,333 @@ def _emit_fused_kernel(
     stencil_expressions: list[tuple[str, str]],
     tile_sizes: tuple[int, ...],
     halo_widths: tuple[int, ...],
+) -> Region:
+    """Build the body region for a fused ``KernelOp``.
+
+    The region contains BidOps, SliceOp chains for each merged access,
+    SliceOp chains for each output, LoadOps, StoreOps, and ReturnOp.
+    """
+    halo_vars = ["HX", "HY", "HZ"][:ndim]
+    n_vars = ["nx", "ny", "nz"][:ndim]
+
+    # Block args: one per input + one per output
+    num_block_args = len(global_input_names) + len(output_names)
+    block = Block(arg_types=[_IDX] * num_block_args)
+
+    # BidOps
+    for d in range(ndim):
+        bid = BidOp.build(properties={"axis": IntAttr(d)}, result_types=[_IDX])
+        block.add_op(bid)
+
+    # SliceOp chains for each merged access
+    for info in merged_accesses:
+        arr_arg = block.args[info.array_index]
+        prev_result = arr_arg
+        for d in range(ndim):
+            off = info.offsets[d]
+            start_expr = _offset_expr(halo_vars[d], off)
+            stop_expr = _offset_expr(halo_vars[d], off, add_n=True, n_var=n_vars[d])
+            is_last = (d == ndim - 1)
+            props = {
+                "axis": IntAttr(d),
+                "start": StringAttr(start_expr),
+                "stop": StringAttr(stop_expr),
+            }
+            if is_last:
+                props["var_name"] = StringAttr(info.view_name)
+            s = SliceOp.build(
+                properties=props,
+                operands=[prev_result],
+                result_types=[_IDX],
+            )
+            block.add_op(s)
+            prev_result = s.result
+
+        # LoadOp
+        load = LoadOp.build(
+            properties={"view_name": StringAttr(info.view_name)},
+            operands=[prev_result],
+            result_types=[_IDX],
+        )
+        block.add_op(load)
+
+    # Output view slice chains
+    for out_idx, out_name in enumerate(output_names):
+        out_arg = block.args[len(global_input_names) + out_idx]
+        prev_result = out_arg
+        for d in range(ndim):
+            is_last = (d == ndim - 1)
+            props = {
+                "axis": IntAttr(d),
+                "start": StringAttr(halo_vars[d]),
+                "stop": StringAttr(f"{halo_vars[d]} + {n_vars[d]}"),
+            }
+            if is_last:
+                props["var_name"] = StringAttr(f"out_{out_name}")
+            s = SliceOp.build(
+                properties=props,
+                operands=[prev_result],
+                result_types=[_IDX],
+            )
+            block.add_op(s)
+            prev_result = s.result
+
+        # StoreOp (one per output)
+        store = StoreOp.build(operands=[prev_result, prev_result])
+        block.add_op(store)
+
+    # ReturnOp
+    ret = ReturnOp.build()
+    block.add_op(ret)
+
+    return Region([block])
+
+
+def _build_fused_kernel_op(
+    fused_name: str,
+    ndim: int,
+    global_input_names: list[str],
+    output_names: list[str],
+    merged_accesses: list[_AccessInfo],
+    stencil_expressions: list[tuple[str, str]],
+    tile_sizes: tuple[int, ...],
+    halo_widths: tuple[int, ...],
+    all_constants: dict[str, float],
+) -> KernelOp:
+    """Build a fused ``KernelOp`` from merged metadata."""
+    body = _build_fused_kernel_body(
+        fused_name, ndim,
+        global_input_names, output_names,
+        merged_accesses, stencil_expressions,
+        tile_sizes, halo_widths,
+    )
+
+    # Build constants array
+    constants_items: list = []
+    if all_constants:
+        for k, v in sorted(all_constants.items()):
+            constants_items.append(StringAttr(k))
+            constants_items.append(StringAttr(repr(v)))
+
+    # For the fused kernel, input_names includes both inputs and outputs
+    all_names = global_input_names + output_names
+
+    # Build a multi-expression string: "result_name1=expr1;result_name2=expr2"
+    expr_parts = [f"{rn}={ex}" for rn, ex in stencil_expressions]
+    fused_expression = ";".join(expr_parts)
+
+    props: dict = {
+        "kernel_name": StringAttr(f"{fused_name}_fused"),
+        "tile_shape": ArrayAttr([IntAttr(t) for t in tile_sizes]),
+        "halo": ArrayAttr([IntAttr(h) for h in halo_widths]),
+        "ndim": IntAttr(ndim),
+        "input_names": ArrayAttr([StringAttr(n) for n in all_names]),
+        "expression": StringAttr(fused_expression),
+    }
+    if constants_items:
+        props["constants"] = ArrayAttr(constants_items)
+
+    return KernelOp.build(
+        properties=props,
+        operands=[[]],
+        regions=[body],
+    )
+
+
+def _build_fused_launcher_preamble(
+    fused_name: str,
+    ndim: int,
+    global_input_names: list[str],
+    output_names: list[str],
+    tile_sizes: tuple[int, ...],
+    halo_widths: tuple[int, ...],
+) -> str:
+    """Build the preamble string for the fused launcher."""
+    t_vars = ["TX", "TY", "TZ"][:ndim]
+    h_vars = ["HX", "HY", "HZ"][:ndim]
+    n_vars = ["Nx", "Ny", "Nz"][:ndim]
+
+    lines = []
+    lines.append(f"{', '.join(t_vars)} = {', '.join(str(t) for t in tile_sizes)}")
+    lines.append(f"{', '.join(h_vars)} = {', '.join(str(h) for h in halo_widths)}")
+
+    first_input = global_input_names[0]
+    trailing = "," if ndim == 1 else ""
+    lines.append(f"{', '.join(n_vars)}{trailing} = {first_input}.shape")
+
+    lines.append("if stream is None:")
+    lines.append("    stream = cp.cuda.get_current_stream()")
+
+    return "\n".join(lines)
+
+
+def _build_fused_standard_host(
+    fused_name: str,
+    ndim: int,
+    global_input_names: list[str],
+    output_names: list[str],
+    tile_sizes: tuple[int, ...],
+    halo_widths: tuple[int, ...],
+) -> HostProgramOp:
+    """Build a ``HostProgramOp`` for the fused standard launcher."""
+    t_vars = ["TX", "TY", "TZ"][:ndim]
+    h_vars = ["HX", "HY", "HZ"][:ndim]
+    n_vars = ["Nx", "Ny", "Nz"][:ndim]
+
+    # Grid expression
+    grid_parts = ", ".join(
+        f"ct.cdiv({n_vars[d]} - 2 * {h_vars[d]}, {t_vars[d]})"
+        for d in range(ndim)
+    )
+    grid_trailing = "," if ndim == 1 else ""
+    grid_expr = f"({grid_parts}{grid_trailing})"
+
+    # Args expression
+    input_args = ", ".join(global_input_names)
+    output_args = ", ".join(output_names)
+    t_args = ", ".join(t_vars)
+    h_args = ", ".join(h_vars)
+    args_expr = f"({input_args}, {output_args}, {t_args}, {h_args})"
+
+    preamble = _build_fused_launcher_preamble(
+        fused_name, ndim, global_input_names, output_names,
+        tile_sizes, halo_widths,
+    )
+
+    host_block = Block()
+    launch = LaunchOp.build(
+        properties={
+            "kernel_name": StringAttr(f"{fused_name}_fused_kernel"),
+            "grid_expr": StringAttr(grid_expr),
+            "args_expr": StringAttr(args_expr),
+        },
+        operands=[[]],
+    )
+    host_block.add_op(launch)
+    host_region = Region([host_block])
+
+    input_params = ", ".join(global_input_names)
+    output_params = ", ".join(output_names)
+    prog_name = f"launch_{fused_name}_fused({input_params}, {output_params}, stream=None)"
+
+    return HostProgramOp.build(
+        properties={
+            "program_name": StringAttr(prog_name),
+            "preamble": StringAttr(preamble),
+        },
+        regions=[host_region],
+    )
+
+
+def _build_fused_temporal_host(
+    fused_name: str,
+    ndim: int,
+    global_input_names: list[str],
+    output_names: list[str],
+    tile_sizes: tuple[int, ...],
+    halo_widths: tuple[int, ...],
+    temporal_steps: int,
+) -> HostProgramOp:
+    """Build a ``HostProgramOp`` for the fused temporal-blocking launcher."""
+    t_vars = ["TX", "TY", "TZ"][:ndim]
+    h_vars = ["HX", "HY", "HZ"][:ndim]
+    T = temporal_steps
+
+    first_input = global_input_names[0]
+
+    lines = []
+    lines.append(f"{', '.join(t_vars)} = {', '.join(str(t) for t in tile_sizes)}")
+    lines.append(f"{', '.join(h_vars)} = {', '.join(str(h) for h in halo_widths)}")
+
+    lines.append("if stream is None:")
+    lines.append("    stream = cp.cuda.get_current_stream()")
+
+    # Grid
+    grid_parts = []
+    for d in range(ndim):
+        h = halo_widths[d]
+        grid_parts.append(
+            f"ct.cdiv({first_input}.shape[{d}] - {2 * h}, {t_vars[d]})"
+        )
+    trailing = "," if ndim == 1 else ""
+    lines.append(f"grid = ({', '.join(grid_parts)}{trailing})")
+
+    # Buffer chains
+    lines.append(f"# Temporal blocking: {T} steps with buffer swapping")
+    for inp in global_input_names:
+        lines.append(f"bufs_{inp} = [{inp}]")
+        lines.append(f"for _ in range({T - 1}):")
+        lines.append(f"    bufs_{inp}.append(cp.zeros_like({inp}))")
+    for inp, out in zip(global_input_names, output_names):
+        lines.append(f"bufs_{inp}.append({out})")
+
+    preamble = "\n".join(lines)
+
+    # Build loop body with LaunchOp
+    buf_inputs = ", ".join(f"bufs_{inp}[_step]" for inp in global_input_names)
+    buf_outputs = ", ".join(f"bufs_{inp}[_step + 1]" for inp in global_input_names)
+    t_args = ", ".join(t_vars)
+    h_args = ", ".join(h_vars)
+    args_expr = f"({buf_inputs}, {buf_outputs}, {t_args}, {h_args})"
+
+    loop_block = Block()
+    launch = LaunchOp.build(
+        properties={
+            "kernel_name": StringAttr(f"{fused_name}_fused_kernel"),
+            "grid_expr": StringAttr("grid"),
+            "args_expr": StringAttr(args_expr),
+        },
+        operands=[[]],
+    )
+    loop_block.add_op(launch)
+    loop_region = Region([loop_block])
+
+    loop = ForLoopOp.build(
+        properties={"count": IntAttr(T)},
+        regions=[loop_region],
+    )
+
+    host_block = Block()
+    host_block.add_op(loop)
+    host_region = Region([host_block])
+
+    input_params = ", ".join(global_input_names)
+    output_params = ", ".join(output_names)
+    prog_name = f"launch_{fused_name}_fused({input_params}, {output_params}, stream=None)"
+
+    return HostProgramOp.build(
+        properties={
+            "program_name": StringAttr(prog_name),
+            "preamble": StringAttr(preamble),
+        },
+        regions=[host_region],
+    )
+
+
+# -------------------------------------------------------------------- #
+# Fused kernel emitter (extends target_to_python for fused patterns)
+# -------------------------------------------------------------------- #
+
+
+def _emit_fused_kernel(
+    e,
+    kernel: KernelOp,
+    output_names: list[str],
 ) -> None:
-    """Emit a single ``@ct.kernel`` that computes all stencil outputs."""
+    """Emit the fused ``@ct.kernel`` function from a ``KernelOp``.
+
+    For fused kernels, the kernel has multiple outputs and the expression
+    is a semicolon-separated list of "result_name=expr" pairs.
+    """
+    from cutile.lowering.emitter import CodeEmitter
+
+    ndim = kernel.ndim.data
+    all_names = [a.data for a in kernel.input_names.data]
+    fused_expression = kernel.expression.data
+
+    # Split all_names into inputs and outputs
+    input_names = [n for n in all_names if n not in output_names]
+
     bid_vars = ["bx", "by", "bz"][:ndim]
     tile_vars = ["TX", "TY", "TZ"][:ndim]
     halo_vars = ["HX", "HY", "HZ"][:ndim]
@@ -142,47 +472,74 @@ def _emit_fused_kernel(
     tile_const_params = ", ".join(f"{tv}: ConstInt" for tv in tile_vars)
     halo_const_params = ", ".join(f"{hv}: ConstInt" for hv in halo_vars)
 
-    input_params = ", ".join(global_input_names)
+    input_params = ", ".join(input_names)
     output_params = ", ".join(output_names)
+
+    kernel_name = kernel.kernel_name.data
 
     e.line("@ct.kernel")
     e.line(
-        f"def {fused_name}_fused_kernel({input_params}, {output_params}, "
+        f"def {kernel_name}_kernel({input_params}, {output_params}, "
         f"{tile_const_params}, {halo_const_params}):"
     )
+
     with e.indent():
         # Block indices
         for i, bv in enumerate(bid_vars):
             e.line(f"{bv} = ct.bid({i})")
 
-        # Interior sizes (use first input array)
-        first_arr = global_input_names[0]
+        # Interior sizes
+        first_arr = input_names[0]
         for d in range(ndim):
             e.line(f"{n_vars[d]} = {first_arr}.shape[{d}] - 2 * {halo_vars[d]}")
 
+        # Walk kernel body for slice chains and loads
+        body_block = list(kernel.body.blocks)[0]
+        val_to_expr: dict = {}
+
+        # Map block args
+        for i, name in enumerate(input_names):
+            val_to_expr[body_block.args[i]] = name
+        for i, name in enumerate(output_names):
+            val_to_expr[body_block.args[len(input_names) + i]] = name
+
+        # Collect slice chains and loads
         e.blank()
         e.line("# --- Sliced input views (deduplicated across stencils) ---")
-        for info in merged_accesses:
-            arr_name = global_input_names[info.array_index]
-            chain = arr_name
-            for d in range(ndim):
-                off = info.offsets[d]
-                start = _offset_expr(halo_vars[d], off)
-                stop = _offset_expr(halo_vars[d], off, add_n=True, n_var=n_vars[d])
-                chain = f"{chain}.slice(axis={d}, start={start}, stop={stop})"
-            e.line(f"{info.view_name} = {chain}")
 
-        # Output views (zero offsets, one per output)
+        load_ops: list = []
+        store_count = 0
+        for op in body_block.ops:
+            if isinstance(op, SliceOp):
+                parent_expr = val_to_expr.get(op.input, "?")
+                axis = op.axis.data
+                start = op.start.data
+                stop = op.stop.data
+                chain_expr = (
+                    f"{parent_expr}.slice(axis={axis}, "
+                    f"start={start}, stop={stop})"
+                )
+                val_to_expr[op.result] = chain_expr
+
+                if op.var_name is not None:
+                    var_name = op.var_name.data
+                    if var_name.startswith("out_"):
+                        pass  # output views emitted separately
+                    else:
+                        e.line(f"{var_name} = {chain_expr}")
+
+            elif isinstance(op, LoadOp):
+                load_ops.append(op)
+
+        # Output views
         e.blank()
         e.line("# --- Output views ---")
-        for out_name in output_names:
-            out_chain = out_name
-            for d in range(ndim):
-                out_chain = (
-                    f"{out_chain}.slice(axis={d}, start={halo_vars[d]}, "
-                    f"stop={halo_vars[d]} + {n_vars[d]})"
-                )
-            e.line(f"out_{out_name} = {out_chain}")
+        for op in body_block.ops:
+            if isinstance(op, SliceOp) and op.var_name is not None:
+                var_name = op.var_name.data
+                if var_name.startswith("out_"):
+                    chain_expr = val_to_expr.get(op.result, "?")
+                    e.line(f"{var_name} = {chain_expr}")
 
         # Load tiles
         e.blank()
@@ -195,131 +552,72 @@ def _emit_fused_kernel(
         else:
             idx_arg = f"({idx_tuple})"
             shape_arg = f"({shape_tuple})"
-        for info in merged_accesses:
+
+        for load in load_ops:
+            view_name = (
+                load.view_name.data if load.view_name is not None else "view"
+            )
             e.line(
-                f"t_{info.view_name} = ct.load({info.view_name}, "
+                f"t_{view_name} = ct.load({view_name}, "
                 f"index={idx_arg}, shape={shape_arg})"
             )
+
+        # Parse fused expression
+        expr_pairs = fused_expression.split(";")
 
         # Compute each stencil expression
         e.blank()
         e.line("# --- Compute stencil expressions ---")
-        for result_name, expr in stencil_expressions:
+        for pair in expr_pairs:
+            result_name, expr = pair.split("=", 1)
             e.line(f"{result_name} = {expr}")
 
         # Store all outputs
         e.blank()
         e.line("# --- Store outputs ---")
-        for (result_name, _), out_name in zip(stencil_expressions, output_names):
+        for pair, out_name in zip(expr_pairs, output_names):
+            result_name = pair.split("=", 1)[0]
             e.line(f"ct.store(out_{out_name}, index={idx_arg}, tile={result_name})")
 
 
-def _emit_fused_launcher(
-    e: CodeEmitter,
-    fused_name: str,
-    ndim: int,
-    global_input_names: list[str],
-    output_names: list[str],
-    tile_sizes: tuple[int, ...],
-    halo_widths: tuple[int, ...],
-) -> None:
-    """Emit a launcher function for the fused kernel."""
-    t_vars = ["TX", "TY", "TZ"][:ndim]
-    h_vars = ["HX", "HY", "HZ"][:ndim]
-    n_vars = ["Nx", "Ny", "Nz"][:ndim]
+def _emit_fused_python(module: ModuleOp, output_names: list[str]) -> str:
+    """Walk a fused cutile_target IR module and emit Python source.
 
-    input_params = ", ".join(global_input_names)
-    output_params = ", ".join(output_names)
+    This is a variant of ``emit_python`` that handles the fused kernel
+    pattern (multiple outputs, multi-expression).
+    """
+    from cutile.lowering.emitter import CodeEmitter
+    from cutile.lowering.target_to_python import _emit_header, _emit_host
 
+    e = CodeEmitter()
+
+    kernel_op: KernelOp | None = None
+    host_op: HostProgramOp | None = None
+
+    for op in module.body.ops:
+        if isinstance(op, KernelOp):
+            kernel_op = op
+        elif isinstance(op, HostProgramOp):
+            host_op = op
+
+    if kernel_op is None:
+        raise ValueError("No KernelOp found in target IR module")
+    if host_op is None:
+        raise ValueError("No HostProgramOp found in target IR module")
+
+    # Header
+    _emit_header(e, kernel_op)
     e.blank()
+    e.line("ConstInt = ct.Constant[int]")
     e.blank()
-    e.line(f"def launch_{fused_name}_fused({input_params}, {output_params}, stream=None):")
-    with e.indent():
-        e.line(f"{', '.join(t_vars)} = {', '.join(str(t) for t in tile_sizes)}")
-        e.line(f"{', '.join(h_vars)} = {', '.join(str(h) for h in halo_widths)}")
 
-        first_input = global_input_names[0]
-        trailing = "," if ndim == 1 else ""
-        e.line(f"{', '.join(n_vars)}{trailing} = {first_input}.shape")
+    # Fused kernel (custom emitter for multi-output)
+    _emit_fused_kernel(e, kernel_op, output_names)
 
-        e.line("if stream is None:")
-        with e.indent():
-            e.line("stream = cp.cuda.get_current_stream()")
+    # Host launcher
+    _emit_host(e, host_op)
 
-        grid_parts = ", ".join(
-            f"ct.cdiv({n_vars[d]} - 2 * {h_vars[d]}, {t_vars[d]})"
-            for d in range(ndim)
-        )
-        grid_trailing = "," if ndim == 1 else ""
-        e.line(f"grid = ({grid_parts}{grid_trailing})")
-
-        t_args = ", ".join(t_vars)
-        h_args = ", ".join(h_vars)
-        e.line(
-            f"ct.launch(stream, grid, {fused_name}_fused_kernel, "
-            f"({input_params}, {output_params}, {t_args}, {h_args}))"
-        )
-
-
-def _emit_fused_temporal_launcher(
-    e: CodeEmitter,
-    fused_name: str,
-    ndim: int,
-    global_input_names: list[str],
-    output_names: list[str],
-    tile_sizes: tuple[int, ...],
-    halo_widths: tuple[int, ...],
-    temporal_steps: int,
-) -> None:
-    """Emit a temporal-blocking launcher for the fused kernel."""
-    t_vars = ["TX", "TY", "TZ"][:ndim]
-    h_vars = ["HX", "HY", "HZ"][:ndim]
-    T = temporal_steps
-
-    input_params = ", ".join(global_input_names)
-    output_params = ", ".join(output_names)
-
-    e.blank()
-    e.blank()
-    e.line(f"def launch_{fused_name}_fused({input_params}, {output_params}, stream=None):")
-    with e.indent():
-        e.line(f"{', '.join(t_vars)} = {', '.join(str(t) for t in tile_sizes)}")
-        e.line(f"{', '.join(h_vars)} = {', '.join(str(h) for h in halo_widths)}")
-
-        first_input = global_input_names[0]
-
-        e.line("if stream is None:")
-        with e.indent():
-            e.line("stream = cp.cuda.get_current_stream()")
-
-        grid_parts = []
-        for d in range(ndim):
-            h = halo_widths[d]
-            grid_parts.append(
-                f"ct.cdiv({first_input}.shape[{d}] - {2 * h}, {t_vars[d]})"
-            )
-        trailing = "," if ndim == 1 else ""
-        e.line(f"grid = ({', '.join(grid_parts)}{trailing})")
-
-        e.line(f"# Temporal blocking: {T} steps with buffer swapping")
-        # For fused kernels with multiple inputs/outputs, we swap each pair
-        for i, (inp, out) in enumerate(zip(global_input_names, output_names)):
-            e.line(f"bufs_{inp} = [{inp}]")
-            e.line(f"for _ in range({T - 1}):")
-            with e.indent():
-                e.line(f"bufs_{inp}.append(cp.zeros_like({inp}))")
-            e.line(f"bufs_{inp}.append({out})")
-
-        e.line(f"for _step in range({T}):")
-        with e.indent():
-            buf_inputs = ", ".join(f"bufs_{inp}[_step]" for inp in global_input_names)
-            buf_outputs = ", ".join(f"bufs_{inp}[_step + 1]" for inp in global_input_names)
-            t_args = ", ".join(t_vars)
-            h_args = ", ".join(h_vars)
-            e.line(
-                f"ct.launch(stream, grid, {fused_name}_fused_kernel, "
-                f"({buf_inputs}, {buf_outputs}, {t_args}, {h_args}))"
-            )
+    return e.render()
 
 
 # -------------------------------------------------------------------- #
@@ -334,6 +632,9 @@ def lower_fused_stencils_to_python(
     temporal_steps: int = 1,
 ) -> str:
     """Lower multiple Dialect 1 stencil IR modules into a single fused kernel.
+
+    The fused kernel is built as Dialect 3 (cutile_target) IR and then
+    emitted to Python via the target emitter.
 
     Each module is expected to contain a single ``cutile_stencil.FuncOp``.
     The function extracts metadata from each, merges (deduplicates) their
@@ -379,14 +680,6 @@ def lower_fused_stencils_to_python(
     # ---------------------------------------------------------------- #
     # 2. Build global input name mapping
     # ---------------------------------------------------------------- #
-    # Each stencil has its own input_names (e.g. ["u"] or ["u", "v"]).
-    # We need a global unique set. The convention is to use the stencil
-    # names as a hint: if stencil "gs_u" has input "u" and stencil "gs_v"
-    # has input "v", the globals are ["u", "v"].
-    #
-    # When two stencils share an input name (same position), they share
-    # the global name. When names differ, both appear.
-
     global_input_names_ordered: list[str] = []
     global_input_set: set[str] = set()
     name_remap: list[dict[str, str]] = []
@@ -395,9 +688,6 @@ def lower_fused_stencils_to_python(
         remap: dict[str, str] = {}
         for local_name in meta.input_names:
             global_name = local_name
-            # If this name is already used by a different stencil with a
-            # different meaning, make it unique by prefixing with stencil name.
-            # For the common case (same field name = same array), just reuse.
             if global_name not in global_input_set:
                 global_input_names_ordered.append(global_name)
                 global_input_set.add(global_name)
@@ -441,7 +731,6 @@ def lower_fused_stencils_to_python(
     # ---------------------------------------------------------------- #
     # 7. Build a fused name
     # ---------------------------------------------------------------- #
-    # Derive from the individual stencil names
     stencil_names = [m.name for m in metas]
     if len(stencil_names) <= 3:
         fused_name = "_".join(stencil_names)
@@ -456,32 +745,37 @@ def lower_fused_stencils_to_python(
         all_constants.update(meta.constants)
 
     # ---------------------------------------------------------------- #
-    # 9. Emit Python source
+    # 9. Build Dialect 3 IR (KernelOp + HostProgramOp)
     # ---------------------------------------------------------------- #
-    e = CodeEmitter()
-    _emit_fused_header(e, fused_name, all_constants)
-    e.blank()
-    e.line("ConstInt = ct.Constant[int]")
-    e.blank()
-
-    _emit_fused_kernel(
-        e, fused_name, ndim,
+    kernel_op = _build_fused_kernel_op(
+        fused_name, ndim,
         global_input_names, output_names,
         merged_accesses, stencil_expressions,
         tile_sizes, halo_widths,
+        all_constants,
     )
 
     if temporal_steps > 1:
-        _emit_fused_temporal_launcher(
-            e, fused_name, ndim,
+        host_op = _build_fused_temporal_host(
+            fused_name, ndim,
             global_input_names, output_names,
             tile_sizes, halo_widths, temporal_steps,
         )
     else:
-        _emit_fused_launcher(
-            e, fused_name, ndim,
+        host_op = _build_fused_standard_host(
+            fused_name, ndim,
             global_input_names, output_names,
             tile_sizes, halo_widths,
         )
 
-    return e.render()
+    # Assemble target module
+    mod_block = Block()
+    mod_block.add_op(kernel_op)
+    mod_block.add_op(host_op)
+    mod_region = Region([mod_block])
+    target_module = ModuleOp(mod_region)
+
+    # ---------------------------------------------------------------- #
+    # 10. Emit Python source from Dialect 3 IR
+    # ---------------------------------------------------------------- #
+    return _emit_fused_python(target_module, output_names)

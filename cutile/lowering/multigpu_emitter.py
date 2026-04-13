@@ -8,8 +8,9 @@ Provides two additional lowering paths beyond the standard single-GPU
 * ``lower_stencil_to_bricked_python`` -- generates a bricked-layout kernel
   with flat-to-brick conversion and divmod addressing.
 
-Both reuse the kernel emission from ``stencil_to_cutile`` and add the
-required host-side orchestration code.
+Both reuse the kernel/launcher emission from Dialect 3 (cutile_target) IR
+via ``lower_to_target_ir`` + ``emit_python``, and add the required
+host-side orchestration code as Python string appendages.
 """
 
 from __future__ import annotations
@@ -20,12 +21,11 @@ from xdsl.dialects.builtin import ModuleOp
 
 from cutile.lowering.emitter import CodeEmitter
 from cutile.lowering.stencil_to_cutile import (
-    _emit_header,
-    _emit_kernel,
-    _emit_launcher,
     _extract_meta,
     _StencilMeta,
 )
+from cutile.lowering.stencil_to_target import lower_to_target_ir
+from cutile.lowering.target_to_python import emit_python
 from cutile.dialects.cutile_stencil.dialect import FuncOp
 
 
@@ -56,6 +56,24 @@ def _resolve_defaults(
         hw = meta.order // 2 if meta.order else 1
         halo_widths = (hw,) * ndim
     return tile_sizes, halo_widths
+
+
+def _get_kernel_and_launcher_source(
+    module: ModuleOp,
+    tile_sizes: tuple[int, ...],
+    halo_widths: tuple[int, ...],
+    temporal_steps: int = 1,
+    boundary_spec: dict | None = None,
+) -> str:
+    """Get kernel + launcher Python source via Dialect 3 IR pipeline."""
+    target_ir = lower_to_target_ir(
+        module,
+        tile_sizes=tile_sizes,
+        halo_widths=halo_widths,
+        temporal_steps=temporal_steps,
+        boundary_spec=boundary_spec,
+    )
+    return emit_python(target_ir)
 
 
 # -------------------------------------------------------------------- #
@@ -279,9 +297,14 @@ def lower_stencil_to_multigpu_python(
 ) -> str:
     """Lower a Dialect 1 stencil IR module to multi-GPU cuTile Python source.
 
+    The kernel and single-GPU launcher are generated through Dialect 3
+    (cutile_target) IR via ``lower_to_target_ir`` + ``emit_python``.
+    Multi-GPU host orchestration (decompose, exchange, gather, launcher)
+    is appended as Python string code.
+
     Generates:
-    - The same ``@ct.kernel`` as single-GPU
-    - A single-GPU ``launch_<name>`` (used per-partition)
+    - The same ``@ct.kernel`` as single-GPU (via Dialect 3)
+    - A single-GPU ``launch_<name>`` (via Dialect 3)
     - ``decompose_domain`` for domain splitting
     - ``exchange_halos`` for P2P halo exchange
     - ``gather_results`` for collecting results
@@ -318,26 +341,16 @@ def lower_stencil_to_multigpu_python(
 
     tile_sizes, halo_widths = _resolve_defaults(meta, tile_sizes, halo_widths)
 
+    # Generate kernel + single-GPU launcher through Dialect 3 IR
+    kernel_source = _get_kernel_and_launcher_source(
+        module, tile_sizes, halo_widths, temporal_steps=1,
+    )
+
+    # Append multi-GPU host orchestration
     e = CodeEmitter()
-
-    # Header
-    _emit_header(e, meta)
-    e.blank()
-    e.line("ConstInt = ct.Constant[int]")
-    e.blank()
-
-    # Kernel (same as single-GPU)
-    _emit_kernel(e, meta, tile_sizes, halo_widths)
-
-    # Single-GPU launcher (used per-partition)
-    _emit_launcher(e, meta, tile_sizes, halo_widths)
-
-    # Multi-GPU helpers
     _emit_decompose_domain(e, meta)
     _emit_exchange_halos(e, meta)
     _emit_gather_results(e, meta)
-
-    # Multi-GPU launcher
     _emit_multigpu_launcher(
         e, meta, tile_sizes, halo_widths,
         num_gpus=num_gpus,
@@ -346,7 +359,7 @@ def lower_stencil_to_multigpu_python(
         overlap=overlap,
     )
 
-    return e.render()
+    return kernel_source + e.render()
 
 
 # -------------------------------------------------------------------- #
@@ -470,7 +483,12 @@ def lower_stencil_to_bricked_python(
 ) -> str:
     """Lower a Dialect 1 stencil IR module to bricked-layout cuTile Python source.
 
-    Generates the standard ``@ct.kernel`` and ``launch_<name>``, plus:
+    The kernel and standard launcher are generated through Dialect 3
+    (cutile_target) IR via ``lower_to_target_ir`` + ``emit_python``.
+    Bricked layout helpers are appended as Python string code.
+
+    Generates the standard ``@ct.kernel`` and ``launch_<name>`` (via Dialect 3),
+    plus:
     - ``to_bricks`` / ``from_bricks`` layout conversion helpers
     - ``launch_<name>_bricked`` wrapper that converts layouts around the kernel
 
@@ -504,23 +522,17 @@ def lower_stencil_to_bricked_python(
     if boundary_spec is None and meta.boundary is not None:
         boundary_spec = meta.boundary
 
+    # Generate kernel + standard launcher through Dialect 3 IR
+    kernel_source = _get_kernel_and_launcher_source(
+        module, tile_sizes, halo_widths,
+        temporal_steps=temporal_steps,
+        boundary_spec=boundary_spec,
+    )
+
+    # Append bricked layout helpers
     e = CodeEmitter()
-
-    # Header
-    _emit_header(e, meta)
-    e.blank()
-    e.line("ConstInt = ct.Constant[int]")
-    e.blank()
-
-    # Kernel (same as single-GPU)
-    _emit_kernel(e, meta, tile_sizes, halo_widths)
-
-    # Standard launcher (used internally by bricked launcher)
-    _emit_launcher(e, meta, tile_sizes, halo_widths)
-
-    # Bricked layout helpers
     _emit_to_bricks(e, meta)
     _emit_from_bricks(e, meta)
     _emit_bricked_launcher(e, meta, tile_sizes, halo_widths, brick_size)
 
-    return e.render()
+    return kernel_source + e.render()
