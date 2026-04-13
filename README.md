@@ -8,25 +8,25 @@ A Python stencil compiler built on [xDSL](https://github.com/xdslproject/xdsl) t
                          Three-Dialect Compilation Stack
                          ==============================
 
-  @stencil                          cutile.kernel {                  @ct.kernel
-  def heat(u, i, j):                  cutile.bid(0)                 def heat_kernel(...):
-    return 0.25 * (                    cutile.slice(...)                bx = ct.bid(0)
-      u[i-1,j] + u[i+1,j]             cutile.load(...)                ...
-      + u[i,j-1] + u[i,j+1])          cutile.store(...)               ct.store(out, ...)
-                                    cutile.host_program {
-                                       cutile.launch(...)           def launch_heat(...):
-                                    }                                  ct.launch(...)
+  @stencil               cutile_stencil.      stencil.apply {       cutile.kernel {       @ct.kernel
+  def heat(u,i,j):         access %u [-1,0]     stencil.access        cutile.slice(...)    def heat_kernel():
+    return 0.25*(...)      arith.mulf ...        [-1, 0]               cutile.load(...)       ct.load(...)
+                           cutile_stencil.       arith.mulf            cutile.store(...)      ct.store(...)
+                             yield %res          stencil.return      cutile.host_program {  def launch_heat():
+                                                                       cutile.launch(...)     ct.launch(...)
+                                                                    }
 
-  Python source            Dialect 1           Dialect 3            Python source
-  (user writes)       (cutile_stencil)      (cutile_target)        (generated GPU)
-       |                     |                    |                      |
-       |   @stencil          |  lower_to_target   |   emit_python        |
-       +-------------------->+------ passes ----->+------------------->--+
-                             |                    |
-                        AST parser          Composable passes:
-                        auto-infer          analysis, tiling,
-                        ndim/order          temporal, boundary,
-                                            multi-GPU, fusion
+  Python source       Dialect 1            Dialect 2              Dialect 3           Python source
+  (user writes)    (cutile_stencil)     (xDSL stencil)         (cutile_target)       (generated GPU)
+       |                 |                   |                       |                     |
+       |  AST parser     | normalize pass    |  analysis passes      | emit_python         |
+       +---------------->+----------------->+----+--+--+--+-------->+------------------->--+
+                                                 |  |  |  |
+                                             footprint |  |
+                                               tiling -+  |
+                                             temporal ----+
+                                             boundary, fusion,
+                                             multi-GPU, ...
 ```
 
 ### Module Structure
@@ -36,6 +36,7 @@ cutile/
 |-- frontend/           @stencil decorator, Python AST parser
 |-- dialects/           xDSL dialect definitions
 |   |-- cutile_stencil/ Dialect 1: mirrors Python syntax
+|   |-- (xdsl.stencil)  Dialect 2: standard MLIR stencil (from xDSL, not ours)
 |   |-- cutile_target/  Dialect 3: cuTile device + host IR
 |   |-- comm/           Communication ops (halo exchange)
 |   |-- timestep/       RK time integration
@@ -107,7 +108,22 @@ cutile_stencil.func @heat(ndim=2, order=2, dtype="float64") {
 }
 ```
 
-**Level 3 -- Dialect 3 (cuTile Target IR):**
+**Level 3 -- Dialect 2 (xDSL Stencil Dialect -- all passes run here):**
+```
+func.func @heat() -> !stencil.temp<?x?xf64> {
+  stencil.apply() {
+    %1 = stencil.access %arg [-1, 0] : !stencil.temp<?x?xf64>
+    %2 = stencil.access %arg [1, 0]  : !stencil.temp<?x?xf64>
+    %3 = stencil.access %arg [0, -1] : !stencil.temp<?x?xf64>
+    %4 = stencil.access %arg [0, 1]  : !stencil.temp<?x?xf64>
+    %5 = arith.constant 0.25 : f64
+    %9 = arith.mulf %5, ... : f64
+    stencil.return %9 : f64
+  } attributes {halo_widths=[1,1], tile_sizes=[32,32], bound="memory"}
+}
+```
+
+**Level 4 -- Dialect 3 (cuTile Target IR):**
 ```
 cutile.kernel @heat(tile=[32,32], halo=[1,1]) {
   cutile.bid(0), cutile.bid(1)
@@ -122,7 +138,7 @@ cutile.host_program @launch_heat {
 }
 ```
 
-**Level 4 -- Generated cuTile Python:**
+**Level 5 -- Generated cuTile Python:**
 ```python
 @ct.kernel
 def heat_kernel(u, output, TX: ConstInt, TY: ConstInt, HX: ConstInt, HY: ConstInt):
