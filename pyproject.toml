@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cutile-stencil"
 version = "0.2.0"
-description = "High-order stencil compilation and tile-based iterative solvers via cuTile"
+description = "An xDSL-based stencil compiler that generates optimized GPU kernels via NVIDIA cuTile"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10"
 authors = [
     {name = "Amir Mohammad Tavakkoli", email = "tavakkoli.amirmohammad@gmail.com"},
 ]
-keywords = ["stencil", "cuda", "gpu", "cutile", "hpc", "codegen"]
+keywords = ["stencil", "cuda", "gpu", "cutile", "hpc", "codegen", "xdsl", "mlir", "dsl", "compiler"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -28,6 +28,9 @@ dependencies = ["numpy>=1.24", "xdsl>=0.62"]
 gpu = ["cuda-tile>=1.2", "cupy-cuda13x"]
 test = ["pytest>=7.0"]
 benchmark = ["jax[cuda12]"]
+
+[tool.setuptools.packages.find]
+include = ["cutile*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
