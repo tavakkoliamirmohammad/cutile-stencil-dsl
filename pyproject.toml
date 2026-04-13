@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cutile-stencil"
-version = "0.1.0"
+version = "0.2.0"
 description = "High-order stencil compilation and tile-based iterative solvers via cuTile"
 readme = "README.md"
 license = "MIT"
