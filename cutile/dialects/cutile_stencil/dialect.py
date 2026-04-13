@@ -243,7 +243,11 @@ class AccessOp(IRDLOperation):
 
     Example (2-D, centre access)::
 
-        %v = cutile_stencil.access %field [0, 0] : …
+        %v = cutile_stencil.access %field [0, 0] : f64
+
+    Custom printer produces::
+
+        cutile_stencil.access %field [-1, 0] {"i", "j"} : f64
     """
 
     name = "cutile_stencil.access"
@@ -277,6 +281,31 @@ class AccessOp(IRDLOperation):
             attributes=attributes,
             result_types=[result_type],
         )
+
+    # -- Custom printer / parser ----------------------------------------
+
+    def print(self, printer) -> None:  # type: ignore[override]
+        """Print a compact form: ``cutile_stencil.access %field [-1, 0] : f64``."""
+        printer.print(" ")
+        printer.print_operand(self.field)
+        printer.print(" ")
+
+        # Offset as [d0, d1, …]
+        offsets = [int(idx.data) for idx in self.offset.parameters[0].data]
+        printer.print("[")
+        printer.print(", ".join(str(o) for o in offsets))
+        printer.print("]")
+
+        # Optional index names
+        if self.index_names is not None:
+            names = [a.data for a in self.index_names]
+            printer.print(" {")
+            printer.print(", ".join(f'"{n}"' for n in names))
+            printer.print("}")
+
+        # Result type
+        printer.print(" : ")
+        printer.print_attribute(self.res.type)
 
 
 @irdl_op_definition
