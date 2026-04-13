@@ -1,18 +1,25 @@
 """Stencil-to-cuTile lowering: Dialect 1 IR to cuTile Python source.
 
-Given an xDSL ``ModuleOp`` produced by the frontend parser (Dialect 1),
-this module walks the IR, extracts stencil metadata and arithmetic
-structure, and emits a complete Python file that uses the ``cuda.tile``
-(cuTile) API:
+This module provides the public ``lower_stencil_to_python()`` API that
+takes a Dialect 1 stencil IR module and produces cuTile Python source.
+
+The lowering now goes through the three-dialect stack:
+
+    Dialect 1 (cutile_stencil) -> Dialect 3 (cutile_target) -> Python
+
+Internally it delegates to:
+
+* ``stencil_to_target.lower_to_target_ir()`` -- builds Dialect 3 IR
+  (``KernelOp``, ``SliceOp``, ``LoadOp``, ``StoreOp``, ``LaunchOp``, etc.)
+* ``target_to_python.emit_python()`` -- walks Dialect 3 IR and emits
+  Python source
+
+The generated Python file contains:
 
 * ``@ct.kernel`` function with ``.slice()`` / ``ct.load`` / ``ct.store``
 * ``launch_<name>`` host function with grid calculation and ``ct.launch``
 * Optional temporal-blocking wrapper (buffer-swap loop)
-
-This is the *pragmatic* lowering path -- it goes straight from Dialect 1
-to Python source without constructing an intermediate Dialect 3 IR,
-keeping the implementation compact while matching the output format of
-the existing ``StencilCodeGenerator`` exactly.
+* Optional boundary condition function
 """
 
 from __future__ import annotations
@@ -569,6 +576,10 @@ def lower_stencil_to_python(
 ) -> str:
     """Lower a Dialect 1 stencil IR module to cuTile Python source code.
 
+    The lowering now goes through the three-dialect stack:
+
+        Dialect 1 (cutile_stencil) -> Dialect 3 (cutile_target) -> Python
+
     Parameters
     ----------
     module:
@@ -594,8 +605,11 @@ def lower_stencil_to_python(
     str
         Complete Python source string with ``@ct.kernel`` and launcher.
     """
+    from cutile.lowering.stencil_to_target import lower_to_target_ir
+    from cutile.lowering.target_to_python import emit_python
+
     # ---------------------------------------------------------------- #
-    # 1. Find the FuncOp inside the module
+    # 1. Resolve defaults (need to peek at FuncOp for ndim/order)
     # ---------------------------------------------------------------- #
     func_op: FuncOp | None = None
     for op in module.body.ops:
@@ -605,44 +619,28 @@ def lower_stencil_to_python(
     if func_op is None:
         raise ValueError("No cutile_stencil.FuncOp found in module")
 
-    block = list(func_op.body.blocks)[0]
+    ndim = func_op.ndim.data
+    order = func_op.order.data
 
-    # ---------------------------------------------------------------- #
-    # 2. Extract metadata from the IR
-    # ---------------------------------------------------------------- #
-    meta = _extract_meta(func_op, block)
-    ndim = meta.ndim
-
-    # Apply defaults for tile_sizes and halo_widths
     _default_tiles = {1: (1024,), 2: (64, 64), 3: (32, 32, 32)}
     if tile_sizes is None:
         tile_sizes = _default_tiles.get(ndim, (64,) * ndim)
     if halo_widths is None:
-        hw = meta.order // 2 if meta.order else 1
+        hw = order // 2 if order else 1
         halo_widths = (hw,) * ndim
 
-    # Merge boundary info: IR boundary attr takes precedence, then
-    # the explicit boundary_spec parameter.
-    if boundary_spec is None and meta.boundary is not None:
-        boundary_spec = meta.boundary
+    # ---------------------------------------------------------------- #
+    # 2. Lower to Dialect 3 (cutile_target) IR
+    # ---------------------------------------------------------------- #
+    target_ir = lower_to_target_ir(
+        module,
+        tile_sizes=tile_sizes,
+        halo_widths=halo_widths,
+        temporal_steps=temporal_steps,
+        boundary_spec=boundary_spec,
+    )
 
     # ---------------------------------------------------------------- #
-    # 3. Emit Python source
+    # 3. Emit Python source from Dialect 3 IR
     # ---------------------------------------------------------------- #
-    e = CodeEmitter()
-    _emit_header(e, meta)
-    e.blank()
-    e.line("ConstInt = ct.Constant[int]")
-    e.blank()
-
-    _emit_kernel(e, meta, tile_sizes, halo_widths)
-
-    if boundary_spec is not None:
-        _emit_boundary(e, meta, halo_widths, boundary_spec)
-
-    if temporal_steps > 1:
-        _emit_temporal_launcher(e, meta, tile_sizes, halo_widths, temporal_steps)
-    else:
-        _emit_launcher(e, meta, tile_sizes, halo_widths)
-
-    return e.render()
+    return emit_python(target_ir)

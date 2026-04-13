@@ -16,6 +16,7 @@ from xdsl.irdl import (
     result_def,
     region_def,
     prop_def,
+    opt_prop_def,
     traits_def,
 )
 from xdsl.traits import IsTerminator, NoTerminator
@@ -33,6 +34,14 @@ class KernelOp(IRDLOperation):
     The *body* region contains device-side operations terminated by a
     ``ReturnOp``.  ``params`` captures the kernel's tensor parameters as
     SSA values produced by the enclosing host program.
+
+    Optional properties carry metadata needed for Python emission:
+
+    - ``ndim``: number of spatial dimensions (1-3).
+    - ``input_names``: array parameter names (``["u"]`` or ``["u","v"]``).
+    - ``expression``: the arithmetic expression string (e.g. ``"0.25 * ..."``)
+      emitted as ``result = <expression>`` inside the kernel body.
+    - ``constants``: captured constants from the stencil definition scope.
     """
 
     name = "cutile.kernel"
@@ -40,6 +49,11 @@ class KernelOp(IRDLOperation):
     kernel_name = prop_def(StringAttr)
     tile_shape = prop_def(ArrayAttr)
     halo = prop_def(ArrayAttr)
+
+    ndim = opt_prop_def(IntAttr)
+    input_names = opt_prop_def(ArrayAttr)
+    expression = opt_prop_def(StringAttr)
+    constants = opt_prop_def(ArrayAttr)
 
     params = var_operand_def()
     body = region_def()
@@ -52,6 +66,10 @@ class SliceOp(IRDLOperation):
     *start* and *stop* are expression strings (e.g. ``"bid*T"``), kept as
     ``StringAttr`` so that the emitter can paste them verbatim into generated
     Python/CUDA source.
+
+    Optional ``var_name`` stores the LHS variable name for the *final*
+    slice in a chain (e.g. ``"u_m1_0"``).  Intermediate slices leave it
+    unset.
     """
 
     name = "cutile.slice"
@@ -59,6 +77,7 @@ class SliceOp(IRDLOperation):
     axis = prop_def(IntAttr)
     start = prop_def(StringAttr)
     stop = prop_def(StringAttr)
+    var_name = opt_prop_def(StringAttr)
 
     input = operand_def()
     result = result_def()
@@ -66,9 +85,16 @@ class SliceOp(IRDLOperation):
 
 @irdl_op_definition
 class LoadOp(IRDLOperation):
-    """``ct.load(tensor)`` — load a tile from global memory."""
+    """``ct.load(tensor)`` — load a tile from global memory.
+
+    Optional ``view_name`` stores the variable name for the view
+    (e.g. ``"u_m1_0"``) so the emitter can produce
+    ``t_u_m1_0 = ct.load(u_m1_0, ...)``.
+    """
 
     name = "cutile.load"
+
+    view_name = opt_prop_def(StringAttr)
 
     tensor = operand_def()
     result = result_def()
@@ -114,12 +140,20 @@ class HostProgramOp(IRDLOperation):
     """Top-level host-side launcher function.
 
     The *body* region contains host operations (alloc, launch, sync, ...).
+
+    Optional properties carry emission-time metadata:
+
+    - ``preamble``: lines of code emitted before the body (tile/halo
+      constants, shape unpacking, stream default, grid calc).
     """
 
     name = "cutile.host_program"
 
     program_name = prop_def(StringAttr)
+    preamble = opt_prop_def(StringAttr)
     body = region_def()
+
+    traits = traits_def(NoTerminator())
 
 
 @irdl_op_definition
@@ -136,12 +170,16 @@ class AllocOp(IRDLOperation):
 
 @irdl_op_definition
 class LaunchOp(IRDLOperation):
-    """Launch a compiled kernel."""
+    """Launch a compiled kernel.
+
+    ``args_expr`` is the stringified argument tuple for ``ct.launch``.
+    """
 
     name = "cutile.launch"
 
     kernel_name = prop_def(StringAttr)
     grid_expr = prop_def(StringAttr)
+    args_expr = opt_prop_def(StringAttr)
 
     args = var_operand_def()
 
@@ -172,6 +210,8 @@ class ForLoopOp(IRDLOperation):
     count = prop_def(IntAttr)
     body = region_def()
 
+    traits = traits_def(NoTerminator())
+
 
 @irdl_op_definition
 class ForEachGpuOp(IRDLOperation):
@@ -182,6 +222,8 @@ class ForEachGpuOp(IRDLOperation):
     num_gpus = prop_def(IntAttr)
     body = region_def()
 
+    traits = traits_def(NoTerminator())
+
 
 @irdl_op_definition
 class AsyncOp(IRDLOperation):
@@ -190,6 +232,8 @@ class AsyncOp(IRDLOperation):
     name = "cutile.async"
 
     body = region_def()
+
+    traits = traits_def(NoTerminator())
 
 
 @irdl_op_definition
