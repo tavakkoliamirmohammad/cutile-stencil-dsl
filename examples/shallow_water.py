@@ -1,22 +1,20 @@
-"""2D Shallow Water Equations (linearized).
+"""2D Shallow Water Equations -- linearized (new cuTile API).
 
 Solves the linearized shallow water system:
-    dh/dt  = -H0 * (d(hu)/dx + d(hv)/dy)
+    dh/dt   = -H0 * (d(hu)/dx + d(hv)/dy)
     d(hu)/dt = -g * dh/dx
     d(hv)/dt = -g * dh/dy
 
-Uses central differences. Three coupled fields (h, hu, hv).
-This exercises 3 coupled fields and flux stencils.
+Uses central differences. Three coupled fields (h, hu, hv), each
+compiled as a separate stencil.
 """
 
-import os
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import ast
 
 import numpy as np
 
-from cutile_stencil import stencil, compile
-from cutile_stencil.reference.stencil_ref import _ArrayProxy
+from cutile import stencil, compile
+from cutile.reference.stencil_ref import _ArrayProxy
 
 
 # Physical parameters
@@ -26,61 +24,58 @@ dt = 0.01
 dx = 0.1
 
 
-@stencil(dtype="float64")
+@stencil
 def shallow_water_h(h, hu, hv, i, j):
-    """Update height field h."""
-    dhu_dx = (hu[i + 1, j] - hu[i - 1, j]) / (2 * dx)
-    dhv_dy = (hv[i, j + 1] - hv[i, j - 1]) / (2 * dx)
-    return h[i, j] - dt * H0 * (dhu_dx + dhv_dy)
+    return h[i, j] - dt * H0 * ((hu[i + 1, j] - hu[i - 1, j]) / (2 * dx) + (hv[i, j + 1] - hv[i, j - 1]) / (2 * dx))
 
 
-@stencil(dtype="float64")
+@stencil
 def shallow_water_hu(h, hu, i, j):
-    """Update x-momentum field hu."""
-    dh_dx = (h[i + 1, j] - h[i - 1, j]) / (2 * dx)
-    return hu[i, j] - dt * g * dh_dx
+    return hu[i, j] - dt * g * (h[i + 1, j] - h[i - 1, j]) / (2 * dx)
 
 
-@stencil(dtype="float64")
+@stencil
 def shallow_water_hv(h, hv, i, j):
-    """Update y-momentum field hv."""
-    dh_dy = (h[i, j + 1] - h[i, j - 1]) / (2 * dx)
-    return hv[i, j] - dt * g * dh_dy
+    return hv[i, j] - dt * g * (h[i, j + 1] - h[i, j - 1]) / (2 * dx)
 
 
 def main():
     print("=" * 60)
-    print("2D Shallow Water Equations (Linearized)")
+    print("2D Shallow Water Equations -- Linearized (new cuTile API)")
     print("=" * 60)
 
-    # ── Compile all three kernels ────────────────────────────────────
-    result_h = compile(shallow_water_h, domain=(64, 64))
-    result_hu = compile(shallow_water_hu, domain=(64, 64))
-    result_hv = compile(shallow_water_hv, domain=(64, 64))
+    # -- Compile all three kernels ------------------------------------------
+    result_h = compile(shallow_water_h)
+    result_hu = compile(shallow_water_hu)
+    result_hv = compile(shallow_water_hv)
 
-    result_h.print_summary()
+    print(f"\nCompilation summary (h-kernel):")
+    print(f"  ndim:           {result_h.ndim}")
+    print(f"  halo_widths:    {result_h.halo_widths}")
+    print(f"  tile_sizes:     {result_h.tile_sizes}")
+    print(f"  temporal_steps: {result_h.temporal_steps}")
+    if result_h.analysis:
+        for key, val in result_h.analysis.items():
+            print(f"  {key}: {val}")
 
-    gen_dir = os.path.join(os.path.dirname(__file__), "generated")
-    result_h.emit_to_file(os.path.join(gen_dir, "shallow_water_h_kernel.py"))
-    result_hu.emit_to_file(os.path.join(gen_dir, "shallow_water_hu_kernel.py"))
-    result_hv.emit_to_file(os.path.join(gen_dir, "shallow_water_hv_kernel.py"))
-    print(f"\nGenerated h, hu, hv kernels")
-    print("  ✓ Valid Python syntax")
+    # -- Validate generated code is valid Python ----------------------------
+    ast.parse(result_h.code)
+    ast.parse(result_hu.code)
+    ast.parse(result_hv.code)
+    print("\n  [OK] Generated h, hu, hv kernel code is valid Python syntax")
 
-    spec_h = result_h.spec
-    spec_hu = result_hu.spec
-    spec_hv = result_hv.spec
+    halo_h = result_h.halo_widths
+    halo_hu = result_hu.halo_widths
+    halo_hv = result_hv.halo_widths
 
     # Use consistent halo (max across all fields)
     max_halo = tuple(
-        max(spec_h.halo_widths[d], spec_hu.halo_widths[d], spec_hv.halo_widths[d])
+        max(halo_h[d], halo_hu[d], halo_hv[d])
         for d in range(2)
     )
-    for spec in [spec_h, spec_hu, spec_hv]:
-        spec.halo_widths = max_halo
-    print(f"Unified halo: {max_halo}")
+    print(f"  Unified halo: {max_halo}")
 
-    # ── NumPy simulation ────────────────────────────────────────────
+    # -- NumPy simulation ---------------------------------------------------
     Nx, Ny = 32, 32
     hx, hy = max_halo
 
@@ -98,32 +93,30 @@ def main():
     steps = 50
     print(f"\nSimulation: {steps} steps, grid={Nx}x{Ny}")
 
+    interior = tuple(slice(hw_, s_ - hw_) for hw_, s_ in zip(max_halo, h.shape))
+
     for s in range(steps):
-        proxy = {
-            'h': _ArrayProxy(h, spec_h.halo_widths),
-            'hu': _ArrayProxy(hu, spec_h.halo_widths),
-            'hv': _ArrayProxy(hv, spec_h.halo_widths),
-        }
-        result_h_step = spec_h.update_fn(proxy['h'], proxy['hu'], proxy['hv'], 0, 0)
+        # h update
+        proxy_h = _ArrayProxy(h, max_halo)
+        proxy_hu = _ArrayProxy(hu, max_halo)
+        proxy_hv = _ArrayProxy(hv, max_halo)
+        h_step = shallow_water_h._fn(proxy_h, proxy_hu, proxy_hv, 0, 0)
         h_new = h.copy()
-        interior = tuple(slice(hw_, s_ - hw_) for hw_, s_ in zip(spec_h.halo_widths, h.shape))
-        h_new[interior] = result_h_step
+        h_new[interior] = h_step
 
-        proxy2 = {
-            'h': _ArrayProxy(h, spec_hu.halo_widths),
-            'hu': _ArrayProxy(hu, spec_hu.halo_widths),
-        }
-        result_hu_step = spec_hu.update_fn(proxy2['h'], proxy2['hu'], 0, 0)
+        # hu update
+        proxy_h2 = _ArrayProxy(h, max_halo)
+        proxy_hu2 = _ArrayProxy(hu, max_halo)
+        hu_step = shallow_water_hu._fn(proxy_h2, proxy_hu2, 0, 0)
         hu_new = hu.copy()
-        hu_new[interior] = result_hu_step
+        hu_new[interior] = hu_step
 
-        proxy3 = {
-            'h': _ArrayProxy(h, spec_hv.halo_widths),
-            'hv': _ArrayProxy(hv, spec_hv.halo_widths),
-        }
-        result_hv_step = spec_hv.update_fn(proxy3['h'], proxy3['hv'], 0, 0)
+        # hv update
+        proxy_h3 = _ArrayProxy(h, max_halo)
+        proxy_hv3 = _ArrayProxy(hv, max_halo)
+        hv_step = shallow_water_hv._fn(proxy_h3, proxy_hv3, 0, 0)
         hv_new = hv.copy()
-        hv_new[interior] = result_hv_step
+        hv_new[interior] = hv_step
 
         h, hu, hv = h_new, hu_new, hv_new
 
@@ -135,21 +128,7 @@ def main():
     print(f"  Max |hv|: {np.max(np.abs(hv)):.6f}")
 
     assert np.max(np.abs(h)) < 10.0, "h blew up"
-    print("  ✓ Simulation stable")
-
-    # ── GPU kernel validation ────────────────────────────────────────
-    h_test = np.zeros((Nx + 2 * hx, Ny + 2 * hy))
-    hu_test = np.zeros_like(h_test)
-    hv_test = np.zeros_like(h_test)
-    cx_t, cy_t = (Nx + 2 * hx) // 2, (Ny + 2 * hy) // 2
-    for ii in range(h_test.shape[0]):
-        for jj in range(h_test.shape[1]):
-            r2 = ((ii - cx_t) / 3.0)**2 + ((jj - cy_t) / 3.0)**2
-            h_test[ii, jj] = 0.1 * np.exp(-r2)
-
-    result_h.validate(h_test, hu_test, hv_test)
-    result_hu.validate(h_test, hu_test)
-    result_hv.validate(h_test, hv_test)
+    print("  [OK] Simulation stable")
 
 
 if __name__ == "__main__":

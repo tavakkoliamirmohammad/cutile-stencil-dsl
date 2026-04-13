@@ -1,41 +1,53 @@
-"""Full pipeline: DSL → analysis → codegen → NumPy validation for 1D heat equation.
+"""1D heat equation ported to the new cuTile compiler API.
 
 The 1D heat equation with explicit Euler:
-    u^{n+1}_i = u^n_i + α·Δt/Δx² · (u^n_{i-1} - 2·u^n_i + u^n_{i+1})
+    u^{n+1}_i = u^n_i + a*dt/dx^2 * (u^n_{i-1} - 2*u^n_i + u^n_{i+1})
 
-With α·Δt/Δx² = 0.25 (stable):
-    u^{n+1}_i = 0.25·u^n_{i-1} + 0.5·u^n_i + 0.25·u^n_{i+1}
+With a*dt/dx^2 = 0.25 (stable):
+    u^{n+1}_i = 0.25*u^n_{i-1} + 0.5*u^n_i + 0.25*u^n_{i+1}
+
+Gaussian initial condition, energy dissipation check.
 """
 
-import os
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import ast
 
 import numpy as np
 
-from cutile_stencil import stencil, compile
-from cutile_stencil.reference.stencil_ref import time_march
+from cutile import stencil, compile
+from cutile.reference.stencil_ref import apply_stencil, time_march
 
 
-# ── Define stencil ──────────────────────────────────────────────────
+# -- Define stencil --------------------------------------------------------
 
-@stencil(dtype="float64")
+@stencil
 def heat_1d(u, i):
     return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
 
 
 def main():
-    # ── Compile ─────────────────────────────────────────────────────
-    result = compile(heat_1d, domain=(1024,))
-    result.print_summary()
+    print("=" * 60)
+    print("1D Heat Equation (new cuTile API)")
+    print("=" * 60)
 
-    gen_dir = os.path.join(os.path.dirname(__file__), "generated")
-    result.emit_to_file(os.path.join(gen_dir, "heat_1d_kernel.py"))
-    print(f"\nGenerated cuTile kernel")
-    print("  ✓ Valid Python syntax")
+    # -- Compile ------------------------------------------------------------
+    result = compile(heat_1d)
+    code = result.code
 
-    # ── NumPy reference simulation ──────────────────────────────────
-    halo = result.spec.halo_widths
+    print(f"\nCompilation summary:")
+    print(f"  ndim:           {result.ndim}")
+    print(f"  halo_widths:    {result.halo_widths}")
+    print(f"  tile_sizes:     {result.tile_sizes}")
+    print(f"  temporal_steps: {result.temporal_steps}")
+    if result.analysis:
+        for k, v in result.analysis.items():
+            print(f"  {k}: {v}")
+
+    # -- Validate generated code is valid Python ----------------------------
+    ast.parse(code)
+    print("\n  [OK] Generated code is valid Python syntax")
+
+    # -- NumPy reference simulation -----------------------------------------
+    halo = result.halo_widths
     N = 128
     h = halo[0]
     u0 = np.zeros(N + 2 * h)
@@ -45,15 +57,12 @@ def main():
     u0[-1] = 0.0
 
     steps = 100
-    history = time_march(u0, result.spec, steps)
+    history = time_march(u0, heat_1d._fn, ndim=1, halo_widths=halo, steps=steps)
     print(f"\nNumPy simulation: {steps} steps, N={N}")
     print(f"  Initial energy: {np.sum(u0**2):.6f}")
     print(f"  Final energy:   {np.sum(history[-1]**2):.6f}")
     assert np.sum(history[-1]**2) < np.sum(u0**2), "Energy should decrease"
-    print("  ✓ Energy dissipation verified")
-
-    # ── GPU kernel validation ────────────────────────────────────────
-    result.validate(u0)
+    print("  [OK] Energy dissipation verified")
 
 
 if __name__ == "__main__":

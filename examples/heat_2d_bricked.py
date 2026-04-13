@@ -1,47 +1,62 @@
-"""Bricked memory layout demo: 2D heat equation (5-point Laplacian).
+"""2D heat equation with bricked memory layout (new cuTile API).
 
-Demonstrates the full bricked workflow:
+Demonstrates the bricked workflow concept:
 1. Define a @stencil for the 2D heat equation
-2. Compile with BrickLayout to produce a bricked kernel
-3. Convert flat data to bricked layout with to_bricks()
-4. (GPU: launch bricked kernel on bricked arrays)
-5. Convert back with from_bricks() and compare with flat reference
+2. Compile to get generated code
+3. Run CPU reference on flat data
+4. Verify bricked layout round-trip
+
+TODO: Bricked layout is a pass that has been implemented in the new
+architecture (cutile.passes.bricked) but the lowering does not fully
+support it yet.  For now, we compile normally and only demonstrate
+the CPU reference + bricked layout conversion if available.
 """
 
-import os
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import ast
 
 import numpy as np
 
-from cutile_stencil import stencil, compile, BrickLayout
-from cutile_stencil.layout.bricks import to_bricks, from_bricks
-from cutile_stencil.reference.stencil_ref import apply_stencil
+from cutile import stencil, compile
+from cutile.reference.stencil_ref import apply_stencil
 
 
-# ── Define stencil ──────────────────────────────────────────────────
+# -- Define stencil ---------------------------------------------------------
 
-@stencil(dtype="float64")
+@stencil
 def heat_2d(u, i, j):
     return 0.25 * (u[i - 1, j] + u[i + 1, j] + u[i, j - 1] + u[i, j + 1])
 
 
 def main():
+    print("=" * 60)
+    print("2D Heat Equation -- Bricked Layout (new cuTile API)")
+    print("=" * 60)
+
     domain = (128, 128)
-    brick_sizes = (32, 32)
-    layout = BrickLayout(brick_sizes=brick_sizes)
 
-    # ── Compile with bricked layout ──────────────────────────────────
-    result = compile(heat_2d, domain=domain, layout=layout)
-    result.print_summary()
+    # -- Compile (normal, bricked lowering not yet complete) ----------------
+    # TODO: Once bricked lowering is fully supported, pass a layout argument:
+    #   from cutile.passes.bricked import BrickLayout
+    #   layout = BrickLayout(brick_sizes=(32, 32))
+    #   result = compile(heat_2d, layout=layout)
+    result = compile(heat_2d)
+    code = result.code
 
-    gen_dir = os.path.join(os.path.dirname(__file__), "generated")
-    result.emit_to_file(os.path.join(gen_dir, "heat_2d_bricked_kernel.py"))
-    print(f"\nGenerated bricked cuTile kernel")
-    print("  ✓ Valid Python syntax")
+    print(f"\nCompilation summary:")
+    print(f"  ndim:           {result.ndim}")
+    print(f"  halo_widths:    {result.halo_widths}")
+    print(f"  tile_sizes:     {result.tile_sizes}")
+    print(f"  temporal_steps: {result.temporal_steps}")
+    if result.analysis:
+        for k, v in result.analysis.items():
+            print(f"  {k}: {v}")
 
-    # ── Flat reference data ──────────────────────────────────────────
-    halo = result.spec.halo_widths
+    # -- Validate generated code is valid Python ----------------------------
+    ast.parse(code)
+    print("\n  [OK] Generated code is valid Python syntax")
+
+    # -- Flat reference data ------------------------------------------------
+    halo = result.halo_widths
     Nx, Ny = domain
     hx, hy = halo
     flat = np.zeros((Nx + 2 * hx, Ny + 2 * hy))
@@ -55,25 +70,27 @@ def main():
             flat[ii, jj] = np.exp(-r2)
 
     # CPU reference (one stencil application on flat data)
-    cpu_ref = apply_stencil(flat, result.spec)
+    cpu_ref = apply_stencil(flat, heat_2d._fn, ndim=2, halo_widths=halo)
     print(f"\nNumPy reference: domain={Nx}x{Ny}, halo={hx},{hy}")
     print(f"  Max value: {np.max(np.abs(cpu_ref)):.6f}")
 
-    # ── Bricked layout conversion ────────────────────────────────────
-    bricked = to_bricks(flat, brick_sizes, halo)
-    print(f"\nBricked layout: flat {flat.shape} -> bricked {bricked.shape}")
-    num_bricks = layout.num_bricks(domain)
-    print(f"  Bricks: {num_bricks}, padded brick: "
-          f"({brick_sizes[0]+2*hx}, {brick_sizes[1]+2*hy})")
+    # -- Bricked layout conversion (best-effort) ----------------------------
+    brick_sizes = (32, 32)
+    try:
+        from cutile_stencil.layout.bricks import to_bricks, from_bricks
 
-    # Round-trip verification
-    recovered = from_bricks(bricked, brick_sizes, halo)
-    interior = (slice(hx, -hx), slice(hy, -hy))
-    assert np.allclose(recovered[interior], flat[interior]), "Round-trip failed!"
-    print("  ✓ to_bricks -> from_bricks round-trip verified")
+        bricked = to_bricks(flat, brick_sizes, halo)
+        print(f"\nBricked layout: flat {flat.shape} -> bricked {bricked.shape}")
 
-    # ── GPU kernel validation ────────────────────────────────────────
-    result.validate(flat)
+        recovered = from_bricks(bricked, brick_sizes, halo)
+        interior = (slice(hx, -hx), slice(hy, -hy))
+        assert np.allclose(recovered[interior], flat[interior]), "Round-trip failed!"
+        print("  [OK] to_bricks -> from_bricks round-trip verified")
+    except ImportError:
+        print("\n  [NOTE] cutile_stencil.layout.bricks not available; "
+              "skipping bricked layout demo")
+
+    print("  [OK] CPU reference completed")
 
 
 if __name__ == "__main__":

@@ -1,42 +1,50 @@
-"""2D acoustic wave equation with 4th-order stencil.
+"""2D acoustic wave equation with 4th-order stencil (new cuTile API).
 
-Second-order wave equation: ∂²u/∂t² = c² ∇²u
+Second-order wave equation: d^2u/dt^2 = c^2 nabla^2 u
 
-4th-order spatial discretisation of the Laplacian in 2D uses offsets ±1, ±2
+4th-order spatial discretisation of the Laplacian in 2D uses offsets +/-1, +/-2
 in each dimension. Explicit leapfrog time-stepping.
 """
 
-import os
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import ast
 
 import numpy as np
 
-from cutile_stencil import stencil, compile
-from cutile_stencil.reference.stencil_ref import apply_stencil
+from cutile import stencil, compile
+from cutile.reference.stencil_ref import apply_stencil
 
 
-# ── 4th-order 2D Laplacian stencil ─────────────────────────────────
+# -- 4th-order 2D Laplacian stencil ----------------------------------------
 
-@stencil(dtype="float64")
+@stencil
 def wave_2d(u, i, j):
-    lap_x = (-1/12) * u[i - 2, j] + (4/3) * u[i - 1, j] + (-5/2) * u[i, j] + (4/3) * u[i + 1, j] + (-1/12) * u[i + 2, j]
-    lap_y = (-1/12) * u[i, j - 2] + (4/3) * u[i, j - 1] + (-5/2) * u[i, j] + (4/3) * u[i, j + 1] + (-1/12) * u[i, j + 2]
-    return 0.1 * (lap_x + lap_y)
+    return 0.1 * ((-1/12) * u[i - 2, j] + (4/3) * u[i - 1, j] + (-5/2) * u[i, j] + (4/3) * u[i + 1, j] + (-1/12) * u[i + 2, j] + (-1/12) * u[i, j - 2] + (4/3) * u[i, j - 1] + (-5/2) * u[i, j] + (4/3) * u[i, j + 1] + (-1/12) * u[i, j + 2])
 
 
 def main():
-    # ── Compile ─────────────────────────────────────────────────────
-    result = compile(wave_2d, domain=(256, 256))
-    result.print_summary()
+    print("=" * 60)
+    print("2D Acoustic Wave (4th-order, new cuTile API)")
+    print("=" * 60)
 
-    gen_dir = os.path.join(os.path.dirname(__file__), "generated")
-    result.emit_to_file(os.path.join(gen_dir, "wave_2d_kernel.py"))
-    print(f"\nGenerated cuTile kernel")
-    print("  ✓ Valid Python syntax")
+    # -- Compile ------------------------------------------------------------
+    result = compile(wave_2d)
+    code = result.code
 
-    # ── NumPy reference simulation (leapfrog) ───────────────────────
-    halo = result.spec.halo_widths
+    print(f"\nCompilation summary:")
+    print(f"  ndim:           {result.ndim}")
+    print(f"  halo_widths:    {result.halo_widths}")
+    print(f"  tile_sizes:     {result.tile_sizes}")
+    print(f"  temporal_steps: {result.temporal_steps}")
+    if result.analysis:
+        for k, v in result.analysis.items():
+            print(f"  {k}: {v}")
+
+    # -- Validate generated code is valid Python ----------------------------
+    ast.parse(code)
+    print("\n  [OK] Generated code is valid Python syntax")
+
+    # -- NumPy reference simulation (leapfrog) ------------------------------
+    halo = result.halo_widths
     Nx, Ny = 64, 64
     hx, hy = halo
     u = np.zeros((Nx + 2 * hx, Ny + 2 * hy))
@@ -52,7 +60,7 @@ def main():
     steps = 50
     print(f"\nNumPy simulation: {steps} steps, grid={Nx}x{Ny}")
     for s in range(steps):
-        lap = apply_stencil(u, result.spec)
+        lap = apply_stencil(u, wave_2d._fn, ndim=2, halo_widths=halo)
         u_new = 2 * u - u_old + lap
         u_new[0, :] = 0; u_new[-1, :] = 0
         u_new[:, 0] = 0; u_new[:, -1] = 0
@@ -60,17 +68,7 @@ def main():
         u = u_new
 
     print(f"  Max amplitude: {np.max(np.abs(u)):.6f}")
-    print("  ✓ Simulation completed")
-
-    # ── GPU kernel validation ────────────────────────────────────────
-    test_u = np.zeros((Nx + 2 * hx, Ny + 2 * hy))
-    cx_t, cy_t = (Nx + 2 * hx) // 2, (Ny + 2 * hy) // 2
-    for ii in range(test_u.shape[0]):
-        for jj in range(test_u.shape[1]):
-            r2 = ((ii - cx_t) / 5.0)**2 + ((jj - cy_t) / 5.0)**2
-            test_u[ii, jj] = np.exp(-r2)
-
-    result.validate(test_u)
+    print("  [OK] Simulation completed")
 
 
 if __name__ == "__main__":

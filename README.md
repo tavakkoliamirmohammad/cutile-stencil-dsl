@@ -1,249 +1,219 @@
 # cuTile Stencil DSL
 
-[![CI](https://github.com/tavakkoliamirmohammad/cutile-stencil-dsl/actions/workflows/ci.yml/badge.svg)](https://github.com/tavakkoliamirmohammad/cutile-stencil-dsl/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/cutile-stencil)](https://pypi.org/project/cutile-stencil/)
-
-High-order stencil compilation and tile-based iterative solvers via [cuTile](https://github.com/NVIDIA/cutile).
+A Python stencil compiler built on [xDSL](https://github.com/xdslproject/xdsl) that generates optimized GPU kernels via NVIDIA [cuTile](https://github.com/NVIDIA/cutile).
 
 ## Architecture
 
-The framework has two layers:
+```
+                         Three-Dialect Compilation Stack
+                         ==============================
 
-1. **Pure Python** — DSL, analysis, reference implementations, and tests. Runs on any machine with Python 3.10+ and NumPy.
-2. **Generated cuTile code** — Syntactically correct Python files (using `cuda.tile`) ready to run when cuTile is available on an NVIDIA GPU.
+  @stencil               cutile_stencil.      stencil.apply {       cutile.kernel {       @ct.kernel
+  def heat(u,i,j):         access %u [-1,0]     stencil.access        cutile.slice(...)    def heat_kernel():
+    return 0.25*(...)      arith.mulf ...        [-1, 0]               cutile.load(...)       ct.load(...)
+                           cutile_stencil.       arith.mulf            cutile.store(...)      ct.store(...)
+                             yield %res          stencil.return      cutile.host_program {  def launch_heat():
+                                                                       cutile.launch(...)     ct.launch(...)
+                                                                    }
+
+  Python source       Dialect 1            Dialect 2              Dialect 3           Python source
+  (user writes)    (cutile_stencil)     (xDSL stencil)         (cutile_target)       (generated GPU)
+       |                 |                   |                       |                     |
+       |  AST parser     | normalize pass    |  analysis passes      | emit_python         |
+       +---------------->+----------------->+----+--+--+--+-------->+------------------->--+
+                                                 |  |  |  |
+                                             footprint |  |
+                                               tiling -+  |
+                                             temporal ----+
+                                             boundary, fusion,
+                                             multi-GPU, ...
+```
+
+### Module Structure
 
 ```
-cutile_stencil/
-├── dsl/            # @stencil decorator, types, pipeline, registry, boundary conditions
-├── analysis/       # Footprint extraction, tiling, temporal blocking, roofline model
-├── codegen/        # cuTile kernel code generation (1D/2D/3D stencils, bricked layouts)
-├── solvers/        # CG, persistent CG, mixed-precision CG, matrix-free stencil CG
-└── reference/      # NumPy reference: stencil executor, SpMV, CG solver
+cutile/
+|-- frontend/           @stencil decorator, Python AST parser
+|-- dialects/           xDSL dialect definitions
+|   |-- cutile_stencil/ Dialect 1: mirrors Python syntax
+|   |-- (xdsl.stencil)  Dialect 2: standard MLIR stencil (from xDSL, not ours)
+|   |-- cutile_target/  Dialect 3: cuTile device + host IR
+|   |-- comm/           Communication ops (halo exchange)
+|   |-- timestep/       RK time integration
+|   +-- layout/         Data layout types
+|-- passes/             IR transformation passes
+|   |-- analysis/       Footprint, roofline (read-only)
+|   |-- tiling.py       Tile size selection
+|   |-- temporal.py     Temporal blocking
+|   |-- boundary.py     Boundary conditions
+|   |-- decompose.py    Multi-GPU domain split
+|   +-- halo.py         Halo exchange insertion
+|-- lowering/           IR to code
+|   |-- normalize.py    Dialect 1 -> Dialect 2 (xDSL stencil)
+|   |-- stencil_to_target.py  Dialect 1 -> Dialect 3
+|   +-- target_to_python.py   Dialect 3 -> Python source
+|-- runtime/            Execution
+|   |-- launcher.py     compile() API
+|   |-- pipeline.py     Composable PassManager
+|   |-- autotune.py     Empirical GPU autotuning
+|   +-- communicator.py P2P / NCCL backends
++-- reference/          CPU NumPy reference
+```
+
+## Quick Start
+
+```python
+from cutile import stencil, compile
+
+@stencil
+def heat(u, i, j):
+    return 0.25 * (u[i-1,j] + u[i+1,j] + u[i,j-1] + u[i,j+1])
+
+result = compile(heat)
+result.emit_to_file("heat_kernel.py")
+```
+
+The `@stencil` decorator auto-infers `ndim=2` and `order=2` from the function body. The `compile()` function runs the full pass pipeline (analysis, tiling, temporal blocking) and generates a cuTile GPU kernel.
+
+### Multi-GPU (one-line change)
+
+```python
+result = compile(heat, num_gpus=2)
+```
+
+### Compilation Pipeline Example
+
+Here is the IR at every level for a 2D heat stencil:
+
+**Level 1 -- Python source (user writes):**
+```python
+@stencil
+def heat(u, i, j):
+    return 0.25 * (u[i-1,j] + u[i+1,j] + u[i,j-1] + u[i,j+1])
+```
+
+**Level 2 -- Dialect 1 (cuTile Stencil Dialect):**
+```
+cutile_stencil.func @heat(ndim=2, order=2, dtype="float64") {
+  %1 = cutile_stencil.access %0 [-1, 0] {"i", "j"} : f64
+  %2 = cutile_stencil.access %0 [1, 0] {"i", "j"} : f64
+  %3 = cutile_stencil.access %0 [0, -1] {"i", "j"} : f64
+  %4 = cutile_stencil.access %0 [0, 1] {"i", "j"} : f64
+  %5 = arith.constant 0.25 : f64
+  %6 = arith.addf %1, %2 : f64
+  %7 = arith.addf %6, %3 : f64
+  %8 = arith.addf %7, %4 : f64
+  %9 = arith.mulf %5, %8 : f64
+  cutile_stencil.yield %9 : f64
+}
+```
+
+**Level 3 -- Dialect 2 (xDSL Stencil Dialect -- all passes run here):**
+```
+func.func @heat() -> !stencil.temp<?x?xf64> {
+  stencil.apply() {
+    %1 = stencil.access %arg [-1, 0] : !stencil.temp<?x?xf64>
+    %2 = stencil.access %arg [1, 0]  : !stencil.temp<?x?xf64>
+    %3 = stencil.access %arg [0, -1] : !stencil.temp<?x?xf64>
+    %4 = stencil.access %arg [0, 1]  : !stencil.temp<?x?xf64>
+    %5 = arith.constant 0.25 : f64
+    %9 = arith.mulf %5, ... : f64
+    stencil.return %9 : f64
+  } attributes {halo_widths=[1,1], tile_sizes=[32,32], bound="memory"}
+}
+```
+
+**Level 4 -- Dialect 3 (cuTile Target IR):**
+```
+cutile.kernel @heat(tile=[32,32], halo=[1,1]) {
+  cutile.bid(0), cutile.bid(1)
+  cutile.slice(axis=0, start="HX-1", stop="HX-1+nx")
+  cutile.slice(axis=1, start="HY",   stop="HY+ny")    -> u_m1_0
+  cutile.load(u_m1_0)
+  ...
+  cutile.store(out, result)
+}
+cutile.host_program @launch_heat {
+  cutile.launch(heat_kernel, grid, args)
+}
+```
+
+**Level 5 -- Generated cuTile Python:**
+```python
+@ct.kernel
+def heat_kernel(u, output, TX: ConstInt, TY: ConstInt, HX: ConstInt, HY: ConstInt):
+    bx, by = ct.bid(0), ct.bid(1)
+    u_m1_0 = u.slice(axis=0, start=HX-1, stop=HX-1+nx).slice(axis=1, start=HY, stop=HY+ny)
+    t_u_m1_0 = ct.load(u_m1_0, index=(bx, by), shape=(TX, TY))
+    ...
+    result = 0.25 * (t_u_m1_0 + t_u_p1_0 + t_u_0_m1 + t_u_0_p1)
+    ct.store(out, index=(bx, by), tile=result)
+
+def launch_heat(u_in, u_out):
+    ct.launch(stream, grid, heat_kernel, (u_in, u_out, TX, TY, HX, HY))
 ```
 
 ## Setup
 
 ```bash
-# Clone and create virtual environment
 git clone https://github.com/tavakkoliamirmohammad/cutile-stencil-dsl && cd cutile-stencil-dsl
-python -m venv venv
-source venv/bin/activate
+python -m venv venv && source venv/bin/activate
 
-# Install (CPU only — DSL, analysis, codegen, and tests)
+# CPU only (DSL + analysis + codegen)
 pip install -e ".[test]"
 
-# Install with GPU support (adds cuda-tile and cupy)
+# With GPU support
 pip install -e ".[gpu,test]"
 ```
 
-## Running Tests
+## Tests
 
 ```bash
 python -m pytest tests/ -v
 ```
 
-This runs 327 tests across 19 test files:
+258 tests across 6 test files:
 
-| Test file | What it tests |
-|---|---|
-| `test_dsl.py` | `@stencil` decorator, footprint extraction, auto-inference of ndim/order |
-| `test_pipeline.py` | `compile()` and `analyze()` pipeline, `CompileResult` / `AnalysisResult` |
-| `test_tiling.py` | Tile config selection, temporal blocking, roofline analysis |
-| `test_codegen.py` | Generated code passes `ast.parse()`, contains expected cuTile API calls |
-| `test_ast_transform.py` | AST inlining, subscript replacement transforms |
-| `test_reference.py` | NumPy stencil correctness (heat equation, 2D/3D Laplacian) |
-| `test_boundary.py` | Boundary conditions: Dirichlet, Neumann, periodic, reflecting |
-| `test_bricks.py` | Bricked memory layout conversion and validation |
-| `test_solvers.py` | DIA/BSR SpMV, CG convergence (1D/2D Poisson), mixed-precision CG |
-| `test_solver_compile.py` | Solver code generation (CG, persistent CG, mixed-precision) |
-| `test_solver_analysis.py` | Solver roofline and tile analysis |
-| `test_stencil_cg.py` | Matrix-free stencil CG compilation and validation |
-| `test_stencil_bridge.py` | Laplacian stencil spec bridge for solvers |
-| `test_blas_kernels.py` | Generated BLAS kernel correctness |
-| `test_config.py` | GPU presets, `SolverConfig` |
-| `test_applications.py` | Multi-input stencils, coupled fields, staggered grids |
-| `test_benchmark.py` | Benchmark suite runner |
-| `test_bugfixes.py` | Regression tests for fixed bugs |
-| `test_examples.py` | Smoke tests — runs every example end-to-end |
+| Test file | Tests | What it covers |
+|-----------|-------|----------------|
+| `test_dialects.py` | 118 | All 5 xDSL dialects: ops, attrs, printers |
+| `test_cutile_new.py` | 82 | Frontend, passes, lowering, compile API, reference |
+| `test_all_modes_convergence.py` | 24 | 4 modes x 6 stencils (GPU vs CPU) |
+| `test_cutile_gpu_apps.py` | 13 | FDTD, Gray-Scott, shallow water (GPU) |
+| `test_lowering.py` | 21 | Code generation unit tests |
 
-## Running Examples
-
-Each example demonstrates the full pipeline: define stencil → run analysis → generate cuTile kernel → validate with NumPy.
+## Examples
 
 ```bash
-# 1D heat equation (explicit Euler, Gaussian initial condition)
-python examples/heat_1d.py
-
-# 2D acoustic wave equation (4th-order stencil, leapfrog integration)
-python examples/wave_2d.py
-
-# 3D 7-point Laplacian stencil
-python examples/laplacian_3d.py
-
-# 2D heat equation with bricked memory layout
-python examples/heat_2d_bricked.py
-
-# Gray-Scott reaction-diffusion (multi-input stencil, 2 coupled fields)
-python examples/gray_scott.py
-
-# 1D advection with upwind scheme (asymmetric stencil)
-python examples/advection_upwind.py
-
-# Shallow water equations (3 coupled fields, flux stencils)
-python examples/shallow_water.py
-
-# 1D FDTD Maxwell (staggered E-H grids)
-python examples/fdtd_maxwell_1d.py
-
-# Matrix-free CG with stencil operator
-python examples/stencil_cg.py
-
-# Poisson equation solved with Conjugate Gradient (1D and 2D)
-python examples/poisson_cg.py
-
-# Mixed-precision CG: FP64 outer refinement + FP32 inner solve
-python examples/mixed_precision_cg.py
-
-# Benchmark suite with roofline analysis
-python examples/benchmark_suite.py
+python examples/heat_1d.py          # 1D heat equation
+python examples/wave_2d.py          # 2D wave (4th-order)
+python examples/laplacian_3d.py     # 3D Laplacian
+python examples/gray_scott.py       # Reaction-diffusion (2 fields)
+python examples/fdtd_maxwell_1d.py  # FDTD Maxwell
+python examples/shallow_water.py    # Shallow water (3 fields)
+python examples/advection_upwind.py # Upwind advection
+python examples/heat_2d_bricked.py  # Bricked memory layout
 ```
 
-Generated cuTile kernels are written to `examples/generated/`.
+## Benchmarks
 
-## Quick Start
+```bash
+# cuTile only
+python run_benchmarks.py
 
-Define a stencil, compile it, and generate a cuTile kernel — all in a few lines:
+# With autotuning
+python run_benchmarks.py --autotune
 
-```python
-from cutile_stencil import stencil, compile
+# Compare against JAX/XLA
+python run_benchmarks.py --autotune --jax
 
-@stencil(dtype="float64")
-def heat_1d(u, i):
-    return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
-
-result = compile(heat_1d, domain=(1024,))
-result.print_summary()
-result.emit_to_file("heat_1d_kernel.py")
+# Full sweep (all stencils x all modes x all sizes)
+python run_full_benchmarks.py
 ```
 
-The `@stencil` decorator auto-infers `ndim` and `order` from the function signature and array accesses. You can override them explicitly:
+## Dependencies
 
-```python
-@stencil(ndim=2, order=4, dtype="float64")
-def wave_2d(u, i, j):
-    ...
-```
-
-Use GPU presets for hardware-aware analysis:
-
-```python
-from cutile_stencil import compile, HardwareSpec
-
-hw = HardwareSpec.from_preset("A100_80GB")
-result = compile(heat_1d, domain=(1024,), hw=hw)
-result.print_summary()   # Shows tiling, temporal blocking, roofline
-```
-
-Validate the generated kernel against the NumPy reference (no GPU needed):
-
-```python
-import numpy as np
-
-u0 = np.exp(-((np.linspace(0, 1, 128) - 0.5) ** 2) / 0.01)
-result.validate(u0)
-```
-
-To run just the analysis without code generation:
-
-```python
-from cutile_stencil import analyze
-
-analysis = analyze(heat_1d, domain=(1024,), hw=hw)
-print(f"Arithmetic intensity: {analysis.roofline.arithmetic_intensity:.3f}")
-print(f"Bound: {analysis.roofline.bound}")
-```
-
-## Boundary Conditions
-
-Specify boundary handling with `BoundarySpec`:
-
-```python
-from cutile_stencil import stencil, BoundarySpec
-
-@stencil(boundary=BoundarySpec.periodic(2))
-def wave_periodic(u, i, j):
-    return u[i-1, j] + u[i+1, j] + u[i, j-1] + u[i, j+1] - 4*u[i, j]
-
-@stencil(boundary=BoundarySpec.dirichlet(1, value=0.0))
-def heat_dirichlet(u, i):
-    return 0.25 * u[i-1] + 0.5 * u[i] + 0.25 * u[i+1]
-```
-
-Available types: `dirichlet`, `neumann`, `periodic`, `reflecting`.
-
-## Bricked Memory Layout
-
-For memory-aware kernels with spatial locality:
-
-```python
-from cutile_stencil import compile, BrickLayout
-
-layout = BrickLayout(brick_sizes=(32, 32))
-result = compile(heat_2d, domain=(128, 128), layout=layout)
-```
-
-## Solver Examples
-
-### Standard CG
-
-Solve Poisson's equation with Conjugate Gradient:
-
-```python
-import numpy as np
-from cutile_stencil.solvers.formats import laplacian_1d_dia
-from cutile_stencil.reference.spmv_ref import dia_spmv
-from cutile_stencil.reference.cg_ref import cg_solve
-
-N = 100
-A = laplacian_1d_dia(N)
-b = np.ones(N)
-
-x, iters, residuals = cg_solve(lambda v: dia_spmv(A, v), b, tol=1e-10)
-print(f"Converged in {iters} iterations, final residual: {residuals[-1]:.2e}")
-```
-
-### Matrix-Free Stencil CG
-
-Use a compiled stencil directly as the CG operator (no sparse matrix needed):
-
-```python
-from cutile_stencil import compile_stencil_cg, laplacian_stencil_spec
-
-spec = laplacian_stencil_spec(ndim=2)
-result = compile_stencil_cg(spec, domain=(64, 64))
-result.print_summary()
-result.emit_to_file("stencil_cg_kernel.py")
-result.validate()
-```
-
-### Compiled Solvers
-
-Generate GPU-ready solver kernels:
-
-```python
-from cutile_stencil.solvers.cg import compile_cg
-from cutile_stencil.solvers.persistent_cg import compile_persistent_cg
-from cutile_stencil.solvers.mixed_precision import compile_mixed_precision_cg
-
-# Standard CG
-cg = compile_cg(dtype="float64")
-cg.emit_to_file("cg_kernel.py")
-
-# Persistent CG (single-kernel with atomic barriers)
-pcg = compile_persistent_cg(dtype="float64")
-pcg.emit_to_file("persistent_cg_kernel.py")
-
-# Mixed-precision: FP64 outer refinement + FP32 inner solve
-mpcg = compile_mixed_precision_cg(outer_dtype="float64", inner_dtype="float32")
-mpcg.emit_to_file("mixed_cg_kernel.py")
-```
+- **xDSL** (>= 0.62) -- Pure Python MLIR framework
+- **NumPy** -- CPU reference
+- **cuda-tile** + **CuPy** -- GPU execution (optional)
+- **JAX** -- Benchmark comparison (optional)

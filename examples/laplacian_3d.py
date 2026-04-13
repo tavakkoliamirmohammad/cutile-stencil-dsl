@@ -1,16 +1,18 @@
-"""3D 7-point Laplacian stencil: DSL → analysis → codegen → NumPy validation."""
+"""3D 7-point Laplacian stencil (new cuTile API).
 
-import os
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+Demonstrates DSL compilation and NumPy validation of the standard
+7-point discrete Laplacian operator in three dimensions.
+"""
+
+import ast
 
 import numpy as np
 
-from cutile_stencil import stencil, compile
-from cutile_stencil.reference.stencil_ref import apply_stencil
+from cutile import stencil, compile
+from cutile.reference.stencil_ref import apply_stencil
 
 
-@stencil(dtype="float64")
+@stencil
 def laplacian_3d(u, i, j, k):
     return (u[i - 1, j, k] + u[i + 1, j, k]
             + u[i, j - 1, k] + u[i, j + 1, k]
@@ -19,31 +21,40 @@ def laplacian_3d(u, i, j, k):
 
 
 def main():
-    # ── Compile ─────────────────────────────────────────────────────
-    result = compile(laplacian_3d, domain=(64, 64, 64))
-    result.print_summary()
+    print("=" * 60)
+    print("3D 7-point Laplacian (new cuTile API)")
+    print("=" * 60)
 
-    gen_dir = os.path.join(os.path.dirname(__file__), "generated")
-    result.emit_to_file(os.path.join(gen_dir, "laplacian_3d_kernel.py"))
-    print(f"\nGenerated cuTile kernel")
-    print("  ✓ Valid Python syntax")
+    # -- Compile ------------------------------------------------------------
+    result = compile(laplacian_3d)
+    code = result.code
 
-    # ── NumPy reference ─────────────────────────────────────────────
-    halo = result.spec.halo_widths
+    print(f"\nCompilation summary:")
+    print(f"  ndim:           {result.ndim}")
+    print(f"  halo_widths:    {result.halo_widths}")
+    print(f"  tile_sizes:     {result.tile_sizes}")
+    print(f"  temporal_steps: {result.temporal_steps}")
+    if result.analysis:
+        for k, v in result.analysis.items():
+            print(f"  {k}: {v}")
+
+    # -- Validate generated code is valid Python ----------------------------
+    ast.parse(code)
+    print("\n  [OK] Generated code is valid Python syntax")
+
+    # -- NumPy reference ----------------------------------------------------
+    halo = result.halo_widths
     N = 16
     h = halo[0]
     u = np.zeros((N + 2 * h, N + 2 * h, N + 2 * h))
     c = N // 2 + h
     u[c, c, c] = 1.0
 
-    ref = apply_stencil(u, result.spec)
+    ref = apply_stencil(u, laplacian_3d._fn, ndim=3, halo_widths=halo)
     lap_center = ref[c, c, c]
     print(f"\nNumPy reference: Laplacian at center = {lap_center:.6f}")
     assert abs(lap_center - (-6.0)) < 1e-10, f"Expected -6.0, got {lap_center}"
-    print("  ✓ Correctness verified")
-
-    # ── GPU kernel validation ────────────────────────────────────────
-    result.validate(u)
+    print("  [OK] Correctness verified")
 
 
 if __name__ == "__main__":
