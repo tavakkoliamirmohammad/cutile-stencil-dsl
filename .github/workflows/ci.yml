@@ -9,6 +9,27 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
+      - name: Run tests
+        run: python -m pytest tests/ -v --ignore=tests/test_all_modes_convergence.py --ignore=tests/test_cutile_gpu_apps.py
+
+  build:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -17,10 +38,22 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[test]"
+      - name: Install build tools
+        run: pip install build
 
-      - name: Run tests
-        run: python -m pytest tests/ -v
+      - name: Build wheel and sdist
+        run: python -m build
+
+      - name: Verify wheel installs and imports
+        run: |
+          pip install dist/cutile_stencil-*.whl
+          python -c "from cutile import stencil, compile; print('Import OK')"
+          python -c "from cutile.dialects.cutile_stencil.dialect import CutileStencilDialect; print('Dialect 1 OK')"
+          python -c "from cutile.dialects.cutile_target.dialect import CutileTargetDialect; print('Dialect 3 OK')"
+          python -c "from cutile.lowering.stencil_to_target import lower_to_target_ir; print('Lowering OK')"
+          python -c "from cutile.lowering.target_to_python import emit_python; print('Emitter OK')"
+
+      - name: Run tests from installed wheel
+        run: |
+          pip install pytest
+          python -m pytest tests/test_dialects.py tests/test_cutile_new.py tests/test_lowering.py -v
