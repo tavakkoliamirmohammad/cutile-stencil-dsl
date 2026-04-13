@@ -19,7 +19,7 @@ from cutile.reference.stencil_ref import apply_stencil, time_march
 
 # -- Define stencil --------------------------------------------------------
 
-@stencil(ndim=1, order=1, dtype="float64")
+@stencil
 def heat_1d(u, i):
     return 0.25 * u[i - 1] + 0.5 * u[i] + 0.25 * u[i + 1]
 

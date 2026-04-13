@@ -18,7 +18,7 @@ from cutile.reference.stencil_ref import time_march
 CFL = 0.5  # CFL number (must be <= 1 for stability)
 
 
-@stencil(ndim=1, order=1, dtype="float64")
+@stencil
 def advection_upwind(u, i):
     return u[i] - CFL * (u[i] - u[i - 1])
 

@@ -16,7 +16,7 @@ from cutile.reference.stencil_ref import apply_stencil
 
 # -- 4th-order 2D Laplacian stencil ----------------------------------------
 
-@stencil(ndim=2, order=4, dtype="float64")
+@stencil
 def wave_2d(u, i, j):
     return 0.1 * ((-1/12) * u[i - 2, j] + (4/3) * u[i - 1, j] + (-5/2) * u[i, j] + (4/3) * u[i + 1, j] + (-1/12) * u[i + 2, j] + (-1/12) * u[i, j - 2] + (4/3) * u[i, j - 1] + (-5/2) * u[i, j] + (4/3) * u[i, j + 1] + (-1/12) * u[i, j + 2])
 

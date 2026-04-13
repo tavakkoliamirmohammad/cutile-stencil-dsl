@@ -22,7 +22,7 @@ from cutile.reference.stencil_ref import apply_stencil
 
 # -- Define stencil ---------------------------------------------------------
 
-@stencil(ndim=2, order=1, dtype="float64")
+@stencil
 def heat_2d(u, i, j):
     return 0.25 * (u[i - 1, j] + u[i + 1, j] + u[i, j - 1] + u[i, j + 1])
 

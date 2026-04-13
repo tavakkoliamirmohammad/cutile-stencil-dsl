@@ -24,12 +24,12 @@ k = 0.065
 dt = 1.0
 
 
-@stencil(ndim=2, order=1, dtype="float64")
+@stencil
 def gray_scott_u(u, v, i, j):
     return u[i, j] + dt * (Du * (u[i - 1, j] + u[i + 1, j] + u[i, j - 1] + u[i, j + 1] - 4 * u[i, j]) - u[i, j] * v[i, j] * v[i, j] + F * (1.0 - u[i, j]))
 
 
-@stencil(ndim=2, order=1, dtype="float64")
+@stencil
 def gray_scott_v(u, v, i, j):
     return v[i, j] + dt * (Dv * (v[i - 1, j] + v[i + 1, j] + v[i, j - 1] + v[i, j + 1] - 4 * v[i, j]) + u[i, j] * v[i, j] * v[i, j] - (F + k) * v[i, j])
 

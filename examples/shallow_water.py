@@ -24,17 +24,17 @@ dt = 0.01
 dx = 0.1
 
 
-@stencil(ndim=2, order=1, dtype="float64")
+@stencil
 def shallow_water_h(h, hu, hv, i, j):
     return h[i, j] - dt * H0 * ((hu[i + 1, j] - hu[i - 1, j]) / (2 * dx) + (hv[i, j + 1] - hv[i, j - 1]) / (2 * dx))
 
 
-@stencil(ndim=2, order=1, dtype="float64")
+@stencil
 def shallow_water_hu(h, hu, i, j):
     return hu[i, j] - dt * g * (h[i + 1, j] - h[i - 1, j]) / (2 * dx)
 
 
-@stencil(ndim=2, order=1, dtype="float64")
+@stencil
 def shallow_water_hv(h, hv, i, j):
     return hv[i, j] - dt * g * (h[i, j + 1] - h[i, j - 1]) / (2 * dx)
 

@@ -12,7 +12,7 @@ from cutile import stencil, compile
 from cutile.reference.stencil_ref import apply_stencil
 
 
-@stencil(ndim=3, order=1, dtype="float64")
+@stencil
 def laplacian_3d(u, i, j, k):
     return (u[i - 1, j, k] + u[i + 1, j, k]
             + u[i, j - 1, k] + u[i, j + 1, k]

@@ -24,13 +24,13 @@ eps = 1.0       # permittivity
 mu = 1.0        # permeability
 
 
-@stencil(ndim=1, order=1, dtype="float64")
+@stencil
 def update_E(E, H, i):
     """Update E field: E^{n+1}[i] = E^n[i] + (dt/(eps*dx)) * (H[i] - H[i-1])"""
     return E[i] + (dt / (eps * dx)) * (H[i] - H[i - 1])
 
 
-@stencil(ndim=1, order=1, dtype="float64")
+@stencil
 def update_H(E, H, i):
     """Update H field: H^{n+1}[i] = H^n[i] + (dt/(mu*dx)) * (E[i+1] - E[i])"""
     return H[i] + (dt / (mu * dx)) * (E[i + 1] - E[i])
