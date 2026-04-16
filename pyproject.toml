@@ -28,6 +28,8 @@ dependencies = ["numpy>=1.24", "xdsl>=0.62"]
 gpu = ["cuda-tile>=1.2", "cupy-cuda13x"]
 test = ["pytest>=7.0"]
 benchmark = ["jax[cuda12]"]
+plotting = ["matplotlib>=3.8"]
+eval = ["devito>=4.8", "matplotlib>=3.8", "jax[cuda12]"]
 
 [tool.setuptools.packages.find]
 include = ["cutile*"]

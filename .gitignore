@@ -7,3 +7,8 @@ generated
 dist/
 build/
 *.egg-info/
+
+# Benchmark results and generated figures
+benchmarks/results/*.json
+paper/figures/*.pdf
+paper/figures/*.png
