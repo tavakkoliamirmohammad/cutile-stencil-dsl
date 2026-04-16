@@ -905,6 +905,10 @@ class TestCommDialect:
             "comm.recv_halo",
             "comm.exchange_halos",
             "comm.barrier",
+            "comm.get_halo_state",
+            "comm.wait_neighbor_event",
+            "comm.launch_per_gpu",
+            "comm.halo_exchange_pair",
         }
         assert expected == op_names
 
