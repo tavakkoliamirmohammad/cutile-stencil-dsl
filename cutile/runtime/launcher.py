@@ -291,6 +291,16 @@ def compile(
                         analysis[key] = str(attr)
             break  # first ApplyOp is enough
 
+    # -------------------------------------------------------------- #
+    # 3. Optionally autotune
+    # -------------------------------------------------------------- #
+    if autotune and domain is not None:
+        from cutile.runtime.autotune import autotune as _autotune
+        max_ts_at = 8 if (temporal_blocking and num_gpus == 1) else 1
+        result = _autotune(stencil_fn, domain, hw=hw, max_temporal=max_ts_at)
+        tile_sizes = result.tile_sizes
+        temporal_steps = result.temporal_steps
+
     if not temporal_blocking:
         temporal_steps = 1
 
@@ -298,15 +308,6 @@ def compile(
     # temporal looping is handled by the multi-GPU launcher itself.
     if num_gpus > 1:
         temporal_steps = 1
-
-    # -------------------------------------------------------------- #
-    # 3. Optionally autotune
-    # -------------------------------------------------------------- #
-    if autotune and domain is not None:
-        from cutile.runtime.autotune import autotune as _autotune
-        result = _autotune(stencil_fn, domain, hw=hw)
-        tile_sizes = result.tile_sizes
-        temporal_steps = result.temporal_steps
 
     # -------------------------------------------------------------- #
     # 4. Lower to Python source using the *original* Dialect 1 IR

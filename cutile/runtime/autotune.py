@@ -38,8 +38,10 @@ class AutotuneResult:
 _CACHE_DIR = Path.home() / ".cache" / "cutile" / "autotune"
 
 
-def _cache_key(name: str, ndim: int, halo: tuple[int, ...], gpu: str) -> str:
-    raw = f"{name}|{ndim}|{halo}|{gpu}"
+def _cache_key(name: str, ndim: int, halo: tuple[int, ...], gpu: str,
+               domain: tuple[int, ...] | None = None,
+               max_temporal: int = 8) -> str:
+    raw = f"{name}|{ndim}|{halo}|{gpu}|{domain}|T{max_temporal}|v2"
     return hashlib.md5(raw.encode()).hexdigest()
 
 
@@ -89,28 +91,24 @@ def _generate_candidates(
 
     candidates: list[tuple[tuple[int, ...], int]] = []
 
+    # T>1 (temporal blocking): a single halo'd tile per buffer, double-buffered.
+    # Matches TemporalBlockingPass smem model.
     for combo in iterproduct(widths, repeat=ndim):
-        for T in range(max_temporal, 0, -1):
+        for T in range(max_temporal, 1, -1):
             expanded = tuple(c + 2 * T * h for c, h in zip(combo, halo))
-            prod_expanded = math.prod(expanded)
-            prod_tile = math.prod(combo)
-
-            smem = (num_loads * prod_expanded + prod_tile) * dtype_bytes
+            smem = 2 * math.prod(expanded) * dtype_bytes
             if smem > shared_mem:
                 continue
-
             candidates.append((combo, T))
             break  # best T for this tile combo
 
-    # Also add T=1 for all tiles (no temporal blocking)
+    # T=1 (no temporal blocking): each ct.load brings in a (tile,) shaped smem
+    # tile — no halo expansion. Total smem = (num_loads + 1_store) * prod(tile).
     for combo in iterproduct(widths, repeat=ndim):
-        expanded = tuple(c + 2 * h for c, h in zip(combo, halo))
-        prod_expanded = math.prod(expanded)
         prod_tile = math.prod(combo)
-        smem = (num_loads * prod_expanded + prod_tile) * dtype_bytes
-        if smem <= shared_mem:
-            if (combo, 1) not in candidates:
-                candidates.append((combo, 1))
+        smem = (num_loads + 1) * prod_tile * dtype_bytes
+        if smem <= shared_mem and (combo, 1) not in candidates:
+            candidates.append((combo, 1))
 
     return candidates
 
@@ -188,6 +186,7 @@ def autotune(
     warmup: int = 10,
     iters: int = 30,
     verbose: bool = False,
+    max_temporal: int = 8,
 ) -> AutotuneResult:
     """Empirically autotune tile sizes and temporal blocking.
 
@@ -215,7 +214,7 @@ def autotune(
     except Exception:
         gpu_name = "unknown"
 
-    cache_key = _cache_key(name, ndim, halo, gpu_name)
+    cache_key = _cache_key(name, ndim, halo, gpu_name, domain, max_temporal)
     cached = _load_cache(cache_key)
     if cached is not None:
         if verbose:
@@ -236,6 +235,7 @@ def autotune(
         ndim, halo,
         shared_mem=hw.shared_mem_bytes,
         dtype_bytes=hw.dtype_bytes,
+        max_temporal=max_temporal,
     )
 
     # Limit candidates

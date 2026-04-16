@@ -76,20 +76,21 @@ class TilingPass(ModulePass):
         best_overhead: float = float("inf")
 
         for tile in candidates:
-            # Shared memory: each TMA load/store needs its own tile in smem
-            # Load tiles are (tile + 2*halo) sized, store tile is (tile) sized
-            expanded = tuple(t + 2 * h for t, h in zip(tile, halo))
-            prod_expanded = math.prod(expanded)
+            # Each ct.load brings a (tile,) shaped tile into shared memory
+            # (halo is realised by shifting source slices, not by expanding
+            # the smem tile). Same for the store. So smem = num_tiles *
+            # prod(tile). The halo expansion only matters for bandwidth
+            # accounting (redundant loads at CTA boundaries).
             prod_tile = math.prod(tile)
-
-            # Total shared mem: num_loads * expanded_tile + 1 * output_tile
-            smem_usage = (num_loads * prod_expanded + prod_tile) * self.dtype_bytes
+            smem_usage = num_tiles * prod_tile * self.dtype_bytes
 
             if smem_usage > self.shared_mem_bytes:
                 continue
 
-            # Halo overhead: fraction of expanded tile that is halo
-            overhead = 1.0 - prod_tile / prod_expanded
+            # Halo overhead: fraction of the loaded data that is redundant
+            # halo (lower = better bandwidth utilisation).
+            expanded = tuple(t + 2 * h for t, h in zip(tile, halo))
+            overhead = 1.0 - prod_tile / math.prod(expanded)
             if overhead < best_overhead:
                 best_overhead = overhead
                 best_tile = tile
