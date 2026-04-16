@@ -19,15 +19,11 @@ from benchmarks.stencils import STENCIL_META, interior_size
 
 _HEAT_2D_SRC = textwrap.dedent("""\
 import cuda.tile as ct
-from cuda.tile import ConstInt
-
-TX = ConstInt(32)
-TY = ConstInt(32)
-HX = ConstInt(1)
-HY = ConstInt(1)
+import cupy as cp
+ConstInt = ct.Constant[int]
 
 @ct.kernel
-def heat_2d_kernel(u, output):
+def heat_2d_kernel(u, output, TX: ConstInt, TY: ConstInt, HX: ConstInt, HY: ConstInt):
     bx = ct.bid(0)
     by = ct.bid(1)
     nx = u.shape[0] - 2 * HX
@@ -45,26 +41,21 @@ def heat_2d_kernel(u, output):
     ct.store(out_view, index=(bx, by), tile=result)
 
 def launch_heat_2d(u_in, u_out):
-    nx = u_in.shape[0] - 2
-    ny = u_in.shape[1] - 2
-    grid = ((nx + 31) // 32, (ny + 31) // 32)
-    stream = ct.Stream()
-    ct.launch(stream, grid, heat_2d_kernel, (u_in, u_out))
-    stream.sync()
+    TX, TY = 32, 32
+    HX, HY = 1, 1
+    stream = cp.cuda.get_current_stream()
+    grid = (ct.cdiv(u_in.shape[0] - 2 * HX, TX), ct.cdiv(u_in.shape[1] - 2 * HY, TY))
+    ct.launch(stream, grid, heat_2d_kernel, (u_in, u_out, TX, TY, HX, HY))
 """)
 
 
 _LAPLACIAN_2D_5PT_SRC = textwrap.dedent("""\
 import cuda.tile as ct
-from cuda.tile import ConstInt
-
-TX = ConstInt(32)
-TY = ConstInt(32)
-HX = ConstInt(1)
-HY = ConstInt(1)
+import cupy as cp
+ConstInt = ct.Constant[int]
 
 @ct.kernel
-def lap_2d_kernel(u, output):
+def lap_2d_kernel(u, output, TX: ConstInt, TY: ConstInt, HX: ConstInt, HY: ConstInt):
     bx = ct.bid(0)
     by = ct.bid(1)
     nx = u.shape[0] - 2 * HX
@@ -84,28 +75,22 @@ def lap_2d_kernel(u, output):
     ct.store(out_view, index=(bx, by), tile=result)
 
 def launch_lap_2d(u_in, u_out):
-    nx = u_in.shape[0] - 2
-    ny = u_in.shape[1] - 2
-    grid = ((nx + 31) // 32, (ny + 31) // 32)
-    stream = ct.Stream()
-    ct.launch(stream, grid, lap_2d_kernel, (u_in, u_out))
-    stream.sync()
+    TX, TY = 32, 32
+    HX, HY = 1, 1
+    stream = cp.cuda.get_current_stream()
+    grid = (ct.cdiv(u_in.shape[0] - 2 * HX, TX), ct.cdiv(u_in.shape[1] - 2 * HY, TY))
+    ct.launch(stream, grid, lap_2d_kernel, (u_in, u_out, TX, TY, HX, HY))
 """)
 
 
 _LAPLACIAN_3D_7PT_SRC = textwrap.dedent("""\
 import cuda.tile as ct
-from cuda.tile import ConstInt
-
-TX = ConstInt(8)
-TY = ConstInt(8)
-TZ = ConstInt(8)
-HX = ConstInt(1)
-HY = ConstInt(1)
-HZ = ConstInt(1)
+import cupy as cp
+ConstInt = ct.Constant[int]
 
 @ct.kernel
-def lap_3d_kernel(u, output):
+def lap_3d_kernel(u, output, TX: ConstInt, TY: ConstInt, TZ: ConstInt,
+                  HX: ConstInt, HY: ConstInt, HZ: ConstInt):
     bx = ct.bid(0)
     by = ct.bid(1)
     bz = ct.bid(2)
@@ -131,13 +116,13 @@ def lap_3d_kernel(u, output):
     ct.store(out_view, index=(bx, by, bz), tile=result)
 
 def launch_lap_3d(u_in, u_out):
-    nx = u_in.shape[0] - 2
-    ny = u_in.shape[1] - 2
-    nz = u_in.shape[2] - 2
-    grid = ((nx + 7) // 8, (ny + 7) // 8, (nz + 7) // 8)
-    stream = ct.Stream()
-    ct.launch(stream, grid, lap_3d_kernel, (u_in, u_out))
-    stream.sync()
+    TX, TY, TZ = 8, 8, 8
+    HX, HY, HZ = 1, 1, 1
+    stream = cp.cuda.get_current_stream()
+    grid = (ct.cdiv(u_in.shape[0] - 2 * HX, TX),
+            ct.cdiv(u_in.shape[1] - 2 * HY, TY),
+            ct.cdiv(u_in.shape[2] - 2 * HZ, TZ))
+    ct.launch(stream, grid, lap_3d_kernel, (u_in, u_out, TX, TY, TZ, HX, HY, HZ))
 """)
 
 
