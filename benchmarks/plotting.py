@@ -38,20 +38,33 @@ def _setup_style():
 
 
 def plot_roofline(data: dict, outdir: Path):
-    """Roofline model: achieved performance vs arithmetic intensity."""
+    """Roofline: achieved performance vs DRAM-bound arithmetic intensity.
+
+    Two ceilings: peak DRAM BW (STREAM-measured) and an estimated L2 BW.
+    Cache-resident workloads (working set < L2 capacity) can land between
+    the two ceilings; we mark those points to make the regime explicit.
+    """
     _setup_style()
     fig, ax = plt.subplots(figsize=FIG_ROOFLINE)
 
     peak_bw = data["gpu"]["peak_bw_gbs"]
-    peak_gflops = 2000.0  # will be refined from actual GPU specs
+    peak_gflops = 2000.0
+    # Blackwell L2 BW is roughly 5x DRAM (architecture rule of thumb);
+    # gives a soft upper bound for cache-resident regimes.
+    l2_bw = peak_bw * 5.0
+    l2_capacity_bytes = 96 * 1024 * 1024  # RTX PRO 6000 Blackwell
 
     ai_range = np.logspace(-2, 2, 200)
-    mem_roof = peak_bw * ai_range
-    compute_roof = np.full_like(ai_range, peak_gflops)
-    roof = np.minimum(mem_roof, compute_roof)
-    ax.loglog(ai_range, roof, "k-", linewidth=1.5, label="Roofline", zorder=1)
-    ax.fill_between(ai_range, roof, alpha=0.05, color="gray")
+    dram_roof = np.minimum(peak_bw * ai_range, peak_gflops)
+    l2_roof = np.minimum(l2_bw * ai_range, peak_gflops)
+    ax.loglog(ai_range, l2_roof, "k--", linewidth=0.8,
+              label=f"L2 (~{l2_bw / 1000:.1f} TB/s)", zorder=1)
+    ax.loglog(ai_range, dram_roof, "k-", linewidth=1.5,
+              label=f"DRAM ({peak_bw:.0f} GB/s)", zorder=1)
+    ax.fill_between(ai_range, dram_roof, alpha=0.05, color="gray")
 
+    cache_resident_pts = []
+    dram_pts = []
     for row in data["results"]:
         sname = row["stencil"]
         if "cutile" not in row or "error" in row.get("cutile", {}):
@@ -59,14 +72,29 @@ def plot_roofline(data: dict, outdir: Path):
         ai = arithmetic_intensity(sname)
         gflops = row["cutile"]["gpoints_per_s"] * STENCIL_META[sname]["flops_per_point"]
         npts = row["npoints"]
-        ax.scatter(ai, gflops, c=COLORS["cuTile-DSL"], marker="o",
-                   s=20 + npts / 1e5, edgecolors="black", linewidths=0.3, zorder=3)
+        # Working set: 2 arrays (in + out) at dtype_bytes per point
+        ws = 2 * npts * STENCIL_META[sname]["dtype_bytes"]
+        target = cache_resident_pts if ws < l2_capacity_bytes else dram_pts
+        target.append((ai, gflops, npts))
+
+    if dram_pts:
+        x, y, n = zip(*dram_pts)
+        ax.scatter(x, y, c=COLORS["cuTile-DSL"], marker="o",
+                   s=[20 + ni / 1e5 for ni in n],
+                   edgecolors="black", linewidths=0.3, zorder=3,
+                   label="cuTile (DRAM-resident)")
+    if cache_resident_pts:
+        x, y, n = zip(*cache_resident_pts)
+        ax.scatter(x, y, c=COLORS["cuTile-DSL"], marker="o",
+                   s=[20 + ni / 1e5 for ni in n],
+                   edgecolors="black", linewidths=0.3, zorder=3,
+                   alpha=0.45, label="cuTile (L2-resident)")
 
     ax.set_xlabel("Arithmetic Intensity (FLOPs/Byte)")
     ax.set_ylabel("Performance (GFLOPS)")
     ax.set_title("Roofline Analysis")
     ax.set_xlim(0.01, 100)
-    ax.legend(loc="lower right")
+    ax.legend(loc="lower right", fontsize=6)
     ax.grid(True, which="both", alpha=0.3, linewidth=0.5)
 
     fig.savefig(outdir / "roofline.pdf")

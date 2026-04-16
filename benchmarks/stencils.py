@@ -163,6 +163,14 @@ def interior_size(domain: tuple[int, ...]) -> int:
 
 
 def arithmetic_intensity(name: str) -> float:
-    """Operational intensity in flops/byte."""
+    """DRAM-bound operational intensity in flops/byte.
+
+    For a Jacobi-style stencil sweeping a single field (input -> output),
+    each output point causes one read of the input array and one write of
+    the output array from main memory; intra-stencil accesses come from
+    L1/L2 cache. So DRAM traffic = 2 * dtype_bytes per output point.
+    Counting every stencil access as a DRAM load (the naive
+    ``loads_per_point + stores_per_point`` view) under-states AI by 2-5x.
+    """
     m = STENCIL_META[name]
-    return m["flops_per_point"] / ((m["loads_per_point"] + m["stores_per_point"]) * m["dtype_bytes"])
+    return m["flops_per_point"] / (2 * m["dtype_bytes"])
