@@ -335,6 +335,75 @@ class TestMultiGPUConvergence:
         _validate_multigpu(_make_wave_2d(), (64, 64))
 
 
+@gpu_required
+class TestFeatureComposition:
+    """Verify cuTile features compose without breaking.
+
+    The execution-mode features (temporal blocking, 1D multi-GPU,
+    Cartesian multi-GPU, CUDA-Graph capture) are mostly orthogonal but
+    only their pair-wise interactions are exercised piecewise in other
+    test classes. This class is a single matrix that catches when one
+    of them stops composing with another.
+
+    Multi-GPU + CUDA-Graph is intentionally skipped: ``memcpyPeerAsync``
+    is not permitted in a capturing stream (CUDA constraint, not a
+    cuTile bug; see ``cutile/runtime/graph_helpers.py`` docstring).
+    """
+
+    def test_1gpu_with_temporal_blocking_compiles(self):
+        from cutile.runtime.launcher import compile as stencil_compile
+        sfn = _make_heat_2d()
+        res = stencil_compile(sfn, domain=(256, 256), num_gpus=1,
+                              temporal_blocking=True)
+        assert res.tile_sizes is not None
+
+    @multigpu_required
+    def test_2gpu_1d_with_temporal_blocking_compiles(self):
+        from cutile.runtime.launcher import compile as stencil_compile
+        sfn = _make_heat_2d()
+        res = stencil_compile(sfn, domain=(256, 256), num_gpus=2,
+                              temporal_blocking=True)
+        assert res.tile_sizes is not None
+        # multi-GPU forces T=1 (per-GPU step is one timestep)
+        assert res.temporal_steps == 1
+
+    @multigpu_required
+    def test_cartesian_with_temporal_blocking_compiles(self):
+        from cutile.runtime.launcher import compile as stencil_compile
+        sfn = _make_heat_2d()
+        res = stencil_compile(sfn, domain=(256, 256), topology=(2, 2),
+                              temporal_blocking=True)
+        assert res.tile_sizes is not None
+
+    def test_1gpu_with_graph_capture_runs(self):
+        from cutile.runtime.launcher import compile as stencil_compile
+        from cutile.runtime.graph_helpers import capture_loop
+        sfn = _make_heat_2d()
+        domain = (128, 128); halo = (1, 1)
+        shape = tuple(d + 2 * h for d, h in zip(domain, halo))
+        res = stencil_compile(sfn, domain=domain, num_gpus=1,
+                              temporal_blocking=False)
+        launch = getattr(res.load_module(), f"launch_{res.name}")
+        u_in = cp.random.randn(*shape).astype(cp.float64)
+        u_out = cp.zeros_like(u_in)
+        cap = capture_loop(launch, u_in, u_out, n_iters=10)
+        cap.replay(); cap.synchronize()
+
+    @multigpu_required
+    def test_multigpu_with_graph_capture_is_blocked(self):
+        # cudaMemcpyPeerAsync is not permitted in a capturing stream.
+        # We removed capture_multigpu_loop; this test documents that
+        # decision so a re-introduction without solving the CUDA
+        # constraint trips the test suite.
+        import importlib
+        import cutile.runtime.graph_helpers as gh
+        importlib.reload(gh)
+        assert not hasattr(gh, "capture_multigpu_loop"), (
+            "capture_multigpu_loop was reintroduced without solving "
+            "cudaErrorStreamCaptureUnsupported on memcpyPeerAsync"
+        )
+
+
 @multigpu_required
 class TestCartesianTopologyConvergence:
     """Cartesian-topology multi-GPU correctness.
