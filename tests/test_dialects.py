@@ -909,6 +909,9 @@ class TestCommDialect:
             "comm.wait_neighbor_event",
             "comm.launch_per_gpu",
             "comm.halo_exchange_pair",
+            "comm.get_cartesian_state",
+            "comm.wait_cartesian_halo",
+            "comm.cartesian_halo_send_axis",
         }
         assert expected == op_names
 

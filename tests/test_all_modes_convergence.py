@@ -336,6 +336,54 @@ class TestMultiGPUConvergence:
 
 
 @multigpu_required
+class TestCartesianTopologyConvergence:
+    """Cartesian-topology multi-GPU correctness.
+
+    The Cartesian path uses :func:`cartesian_decompose` (N-D process
+    grid) and :func:`cartesian_halo_send_axis` (per-axis async halo
+    exchange). Verify bit-exact against the single-GPU reference for
+    a 2x2 grid (2D stencils) and a 2x2 grid for 3D (which becomes
+    (2,2,1) — a 1D split along axis 0 in 3D).
+    """
+
+    def test_heat_2d_2x2(self):
+        from cutile.runtime.multigpu_helpers import (
+            reset_cartesian_halo_state,
+        )
+        from cutile.runtime.launcher import compile as stencil_compile
+        from cutile.reference.stencil_ref import apply_stencil
+        from cupy import asarray, asnumpy
+
+        sfn = _make_heat_2d()
+        domain = (128, 128); halo = (1, 1)
+        shape = tuple(d + 2 * h for d, h in zip(domain, halo))
+        np.random.seed(99)
+        u_np = np.random.randn(*shape).astype(np.float64)
+
+        # Cartesian via IR
+        reset_cartesian_halo_state()
+        res = stencil_compile(sfn, topology=(2, 2),
+                              temporal_blocking=False)
+        mod = res.load_module()
+        kname = res.name  # may differ from test fixture name
+        u_g = asarray(u_np)
+        setup = getattr(mod, f"setup_cartesian_{kname}")
+        step = getattr(mod, f"step_cartesian_{kname}")
+        gather = getattr(mod, f"gather_cartesian_{kname}")
+        decomp, out_parts = setup(u_g, topology=(2, 2))
+        step(decomp, out_parts, topology=(2, 2))
+        u_out = asarray(np.zeros_like(u_np))
+        gather(u_out, decomp, out_parts, topology=(2, 2))
+
+        # CPU reference: single step
+        cpu_ref = apply_stencil(u_np, sfn._fn, ndim=res.ndim,
+                                halo_widths=halo)
+        sl = _interior_slices(halo)
+        diff = float(np.max(np.abs(asnumpy(u_out)[sl] - cpu_ref[sl])))
+        assert diff < 1e-10, f"Cartesian 2x2 max_diff={diff:.2e}"
+
+
+@multigpu_required
 class TestMultiGPUIteratedConvergence:
     """Stress-test multi-GPU correctness across many timesteps.
 

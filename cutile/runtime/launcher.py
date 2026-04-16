@@ -193,6 +193,7 @@ def compile(
     overlap: bool = True,
     layout: str | None = None,
     brick_size: int = 32,
+    topology: tuple[int, ...] | None = None,
 ) -> CompileResult:
     """Compile a ``@stencil``-decorated function through the pipeline.
 
@@ -316,8 +317,21 @@ def compile(
     if hasattr(stencil_fn, "_boundary") and stencil_fn._boundary is not None:
         boundary_spec = stencil_fn._boundary
 
-    if num_gpus > 1:
-        # Multi-GPU lowering
+    if topology is not None:
+        # Cartesian-topology multi-GPU lowering. ``num_gpus`` is implied
+        # by ``prod(topology)``.
+        from cutile.lowering.multigpu_emitter import (
+            lower_stencil_to_cartesian_python,
+        )
+        code = lower_stencil_to_cartesian_python(
+            ir.clone(),
+            topology=tuple(topology),
+            tile_sizes=tile_sizes,
+            halo_widths=halo_widths,
+            temporal_steps=temporal_steps,
+        )
+    elif num_gpus > 1:
+        # 1D-split multi-GPU lowering
         from cutile.lowering.multigpu_emitter import lower_stencil_to_multigpu_python
 
         code = lower_stencil_to_multigpu_python(

@@ -79,6 +79,48 @@ def _get_kernel_and_launcher_source(
 # -------------------------------------------------------------------- #
 # Multi-GPU lowering
 # -------------------------------------------------------------------- #
+
+
+def lower_stencil_to_cartesian_python(
+    module: ModuleOp,
+    topology: tuple[int, ...],
+    tile_sizes: tuple[int, ...] | None = None,
+    halo_widths: tuple[int, ...] | None = None,
+    temporal_steps: int = 1,
+) -> str:
+    """Lower a stencil IR module to Cartesian-topology cuTile Python.
+
+    Emits ``setup_cartesian_X / step_cartesian_X / gather_cartesian_X /
+    launch_cartesian_X`` via comm-dialect Cartesian ops. ``topology`` is
+    the per-axis number of GPUs (e.g. ``(2, 2)`` = 4 GPUs in a 2x2
+    grid). For a logical 1D split, ``(N,)`` is equivalent to the
+    standard ``lower_stencil_to_multigpu_python`` path with
+    ``split_axis=0`` and ``num_gpus=N``.
+    """
+    from cutile.lowering.multigpu_lowering import (
+        build_cartesian_host_programs,
+        emit_cartesian_host_programs,
+    )
+
+    func_op = _find_func_op(module)
+    block = list(func_op.body.blocks)[0]
+    meta = _extract_meta(func_op, block)
+
+    tile_sizes, halo_widths = _resolve_defaults(meta, tile_sizes, halo_widths)
+
+    kernel_source = _get_kernel_and_launcher_source(
+        module, tile_sizes, halo_widths, temporal_steps=1,
+    )
+
+    host_programs = build_cartesian_host_programs(
+        kernel_name=meta.name,
+        topology=tuple(topology),
+        halo_widths=tuple(halo_widths),
+    )
+    cart_source = emit_cartesian_host_programs(host_programs)
+    return kernel_source + cart_source
+
+
 def lower_stencil_to_multigpu_python(
     module: ModuleOp,
     num_gpus: int = 2,

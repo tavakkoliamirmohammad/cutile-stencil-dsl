@@ -29,9 +29,12 @@ from xdsl.dialects.builtin import IntAttr, ModuleOp, StringAttr
 from xdsl.ir import Block, Region
 
 from cutile.dialects.comm.dialect import (
+    CartesianHaloSendAxisOp,
+    GetCartesianStateOp,
     GetHaloStateOp,
     HaloExchangePairOp,
     LaunchPerGpuOp,
+    WaitCartesianHaloOp,
     WaitNeighborEventOp,
 )
 from cutile.dialects.cutile_target.dialect import (
@@ -278,5 +281,240 @@ def emit_multigpu_host_programs(host_programs: list[HostProgramOp]) -> str:
             if list(block.ops):
                 kernel_name = sig.split("step_multigpu_", 1)[1].split("(", 1)[0]
                 _emit_step_body(e, host.body, kernel_name)
+
+    return e.render()
+
+
+# ===========================================================================
+# Cartesian-topology multi-GPU lowering
+# ===========================================================================
+
+
+_CART_HELPER_IMPORT = (
+    "from cutile.runtime.multigpu_helpers import (\n"
+    "    cartesian_decompose,\n"
+    "    cartesian_gather,\n"
+    "    get_cartesian_halo_state,\n"
+    "    cartesian_halo_send_axis,\n"
+    "    _cart_neighbour,\n"
+    ")\n"
+    "import math as _math"
+)
+
+
+def _build_cartesian_step_body(
+    kernel_name: str,
+    topology: tuple[int, ...],
+    halo_widths: tuple[int, ...],
+) -> Region:
+    """IR for the Cartesian step body.
+
+    Body:
+        comm.get_cartesian_state {num_ranks}
+        cutile.for_each_gpu {num_ranks=prod(topology)} {
+            comm.wait_cartesian_halo {axis=d}   for each topology axis
+            comm.launch_per_gpu {kernel_name}
+        }
+        cutile.for_loop {count=topology_ndim} {
+            comm.cartesian_halo_send_axis {axis}
+        }
+    """
+    import math
+    num_ranks = math.prod(topology)
+    waits = []
+    for axis in range(len(topology)):
+        if topology[axis] == 1:
+            continue
+        waits.append(WaitCartesianHaloOp.create(
+            properties={"axis": IntAttr(axis)},
+        ))
+    launch = LaunchPerGpuOp.create(
+        properties={"kernel_name": StringAttr(kernel_name)},
+    )
+    foreach_block = Block(waits + [launch])
+    foreach_op = ForEachGpuOp.create(
+        properties={"num_gpus": IntAttr(num_ranks)},
+        regions=[Region(foreach_block)],
+    )
+
+    sends = []
+    for axis in range(len(topology)):
+        if topology[axis] == 1:
+            continue
+        sends.append(CartesianHaloSendAxisOp.create(
+            properties={"axis": IntAttr(axis)},
+        ))
+    send_block = Block(sends)
+    send_loop = ForLoopOp.create(
+        properties={"count": IntAttr(1)},  # body is straight-line; loop is a marker
+        regions=[Region(send_block)],
+    )
+
+    state_op = GetCartesianStateOp.create(
+        properties={"num_ranks": IntAttr(num_ranks)},
+    )
+    return Region(Block([state_op, foreach_op, send_loop]))
+
+
+def build_cartesian_host_programs(
+    kernel_name: str,
+    topology: tuple[int, ...],
+    halo_widths: tuple[int, ...],
+) -> list[HostProgramOp]:
+    """Build setup / step / gather / launch HostProgramOps for the
+    Cartesian-topology code path."""
+    import math
+    num_ranks = math.prod(topology)
+    topo_str = repr(tuple(topology))
+    halo_str = repr(tuple(halo_widths))
+
+    setup = HostProgramOp.create(
+        properties={
+            "program_name": StringAttr(
+                f"setup_cartesian_{kernel_name}(u_in, topology={topo_str})"
+            ),
+            "preamble": StringAttr(
+                f'"""Decompose domain over a Cartesian process grid (call ONCE)."""\n'
+                f"halo_widths = {halo_str}\n"
+                f"decomp = cartesian_decompose(u_in, topology, halo_widths)\n"
+                f"out_parts = []\n"
+                f"for gid in range(_math.prod(topology)):\n"
+                f"    with cp.cuda.Device(gid):\n"
+                f"        out_parts.append(cp.zeros_like(decomp['parts'][gid]))\n"
+                f"return decomp, out_parts"
+            ),
+        },
+        regions=[Region(Block([]))],
+    )
+
+    step_body = _build_cartesian_step_body(kernel_name, topology, halo_widths)
+    step = HostProgramOp.create(
+        properties={
+            "program_name": StringAttr(
+                f"step_cartesian_{kernel_name}(decomp, out_parts, "
+                f"topology={topo_str})"
+            ),
+            "preamble": StringAttr(
+                f'"""One Cartesian timestep + async halo exchange along every grid axis."""\n'
+                f"halo_widths = {halo_str}\n"
+                f"in_parts = decomp['parts']"
+            ),
+        },
+        regions=[step_body],
+    )
+
+    gather = HostProgramOp.create(
+        properties={
+            "program_name": StringAttr(
+                f"gather_cartesian_{kernel_name}(u_out, decomp, parts, "
+                f"topology={topo_str})"
+            ),
+            "preamble": StringAttr(
+                f'"""Gather Cartesian sub-domains into the full output array."""\n'
+                f"halo_widths = {halo_str}\n"
+                f"cartesian_gather(u_out, dict(decomp, parts=parts), halo_widths)"
+            ),
+        },
+        regions=[Region(Block([]))],
+    )
+
+    launch = HostProgramOp.create(
+        properties={
+            "program_name": StringAttr(
+                f"launch_cartesian_{kernel_name}(u_in, u_out, "
+                f"topology={topo_str})"
+            ),
+            "preamble": StringAttr(
+                f'"""Convenience: decompose + step + gather in one call."""\n'
+                f"decomp, out_parts = setup_cartesian_{kernel_name}("
+                f"u_in, topology)\n"
+                f"step_cartesian_{kernel_name}(decomp, out_parts, "
+                f"topology=topology)\n"
+                f"gather_cartesian_{kernel_name}(u_out, decomp, out_parts, "
+                f"topology=topology)"
+            ),
+        },
+        regions=[Region(Block([]))],
+    )
+
+    return [setup, step, gather, launch]
+
+
+def _emit_cartesian_step_body(e: CodeEmitter, region: Region,
+                              kernel_name: str,
+                              topology: tuple[int, ...]) -> None:
+    """Walk a Cartesian step body and emit Python."""
+    block = list(region.blocks)[0]
+    for op in block.ops:
+        if isinstance(op, GetCartesianStateOp):
+            e.line("streams, events, coords = "
+                   "get_cartesian_halo_state(topology, halo_widths)")
+        elif isinstance(op, ForEachGpuOp):
+            e.blank()
+            e.line("for rank in range(_math.prod(topology)):")
+            with e.indent():
+                e.line("with cp.cuda.Device(rank):")
+                with e.indent():
+                    inner = list(op.body.blocks)[0]
+                    for inner_op in inner.ops:
+                        if isinstance(inner_op, WaitCartesianHaloOp):
+                            axis = inner_op.axis.data
+                            e.line(f"# axis {axis}: wait for halos arriving from neighbours")
+                            e.line(f"_left_{axis} = _cart_neighbour(coords[rank], topology, {axis}, -1)")
+                            e.line(f"_right_{axis} = _cart_neighbour(coords[rank], topology, {axis}, +1)")
+                            e.line(f"if _left_{axis} is not None:")
+                            with e.indent():
+                                e.line(f"streams[rank].wait_event(events[(_left_{axis}, {axis}, 'high')])")
+                            e.line(f"if _right_{axis} is not None:")
+                            with e.indent():
+                                e.line(f"streams[rank].wait_event(events[(_right_{axis}, {axis}, 'low')])")
+                        elif isinstance(inner_op, LaunchPerGpuOp):
+                            kn = inner_op.kernel_name.data
+                            e.line(f"launch_{kn}(in_parts[rank], out_parts[rank])")
+                        else:
+                            raise ValueError(
+                                f"Unsupported op in Cartesian for_each_gpu body: {inner_op}"
+                            )
+        elif isinstance(op, ForLoopOp):
+            inner = list(op.body.blocks)[0]
+            for inner_op in inner.ops:
+                if isinstance(inner_op, CartesianHaloSendAxisOp):
+                    axis = inner_op.axis.data
+                    e.blank()
+                    e.line(f"# Halo send along axis {axis}")
+                    e.line(f"cartesian_halo_send_axis(out_parts, coords, "
+                           f"topology, halo_widths, {axis}, streams, events)")
+                else:
+                    raise ValueError(
+                        f"Unsupported op in Cartesian for_loop body: {inner_op}"
+                    )
+        else:
+            raise ValueError(f"Unsupported op in Cartesian step body: {op}")
+
+
+def emit_cartesian_host_programs(host_programs: list[HostProgramOp]) -> str:
+    """Walk Cartesian HostProgramOps and emit Python source."""
+    e = CodeEmitter()
+    e.blank()
+    e.blank()
+    for line in _CART_HELPER_IMPORT.split("\n"):
+        e.line(line)
+
+    for host in host_programs:
+        e.blank()
+        e.blank()
+        sig = host.program_name.data
+        e.line(f"def {sig}:")
+        with e.indent():
+            preamble = host.preamble.data if host.preamble is not None else ""
+            for pline in preamble.split("\n"):
+                e.line(pline)
+            block = list(host.body.blocks)[0]
+            if list(block.ops):
+                kernel_name = sig.split("step_cartesian_", 1)[1].split("(", 1)[0]
+                # Topology is encoded in the function signature; the emitter
+                # walks IR ops which already know per-axis indices.
+                _emit_cartesian_step_body(e, host.body, kernel_name,
+                                          topology=())  # unused
 
     return e.render()

@@ -150,6 +150,48 @@ class HaloExchangePairOp(IRDLOperation):
     axis = prop_def(IntAttr)
 
 
+# ---------------------------------------------------------------------------
+# Cartesian-topology ops (N-D process grid).
+# ---------------------------------------------------------------------------
+
+
+@irdl_op_definition
+class GetCartesianStateOp(IRDLOperation):
+    """Look up the Cartesian-topology halo-state cache.
+
+    Lowered to ``streams, events, coords = get_cartesian_halo_state(topology,
+    halo_widths)``. Topology and halo_widths are encoded at the call-site
+    preamble; the IR carries the rank count for the surrounding loops.
+    """
+
+    name = "comm.get_cartesian_state"
+
+    num_ranks = prop_def(IntAttr)
+
+
+@irdl_op_definition
+class WaitCartesianHaloOp(IRDLOperation):
+    """Wait on incoming halo events from the *low* and *high* neighbour
+    along ``axis`` (skipped at grid edges)."""
+
+    name = "comm.wait_cartesian_halo"
+
+    axis = prop_def(IntAttr)
+
+
+@irdl_op_definition
+class CartesianHaloSendAxisOp(IRDLOperation):
+    """Async P2P halo exchange along one Cartesian axis for every pair.
+
+    Lowered to ``cartesian_halo_send_axis(parts, coords, topology,
+    halo_widths, axis, streams, events)``.
+    """
+
+    name = "comm.cartesian_halo_send_axis"
+
+    axis = prop_def(IntAttr)
+
+
 CommDialect = Dialect(
     "comm",
     [
@@ -158,11 +200,15 @@ CommDialect = Dialect(
         RecvHaloOp,
         ExchangeHalosOp,
         BarrierOp,
-        # Async / event-chained ops
+        # 1D async / event-chained ops
         GetHaloStateOp,
         WaitNeighborEventOp,
         LaunchPerGpuOp,
         HaloExchangePairOp,
+        # Cartesian-topology ops
+        GetCartesianStateOp,
+        WaitCartesianHaloOp,
+        CartesianHaloSendAxisOp,
     ],
     [],
 )
