@@ -43,6 +43,7 @@ from cutile.dialects.cutile_target.dialect import (
     HostProgramOp,
 )
 from cutile.lowering.emitter import CodeEmitter
+from cutile.lowering.visitor import IRVisitor
 
 
 # ---------------------------------------------------------------------------
@@ -202,59 +203,63 @@ _HELPER_IMPORT = (
 )
 
 
+class _MultiGPUStepEmitter(IRVisitor):
+    """Walk a step-body region and emit Python via ``IRVisitor`` dispatch.
+
+    Each ``visit_*`` method handles one comm / cutile_target op. The
+    visitor pattern replaces a ~50-line nested ``isinstance`` chain.
+    """
+
+    def __init__(self, e: CodeEmitter) -> None:
+        self.e = e
+
+    # comm dialect ----------------------------------------------------
+    def visit_get_halo_state(self, op) -> None:
+        self.e.line("streams, ev_right, ev_left = "
+                    "get_halo_state(num_gpus, halo_width)")
+
+    def visit_wait_neighbor_event(self, op) -> None:
+        side = op.side.data
+        if side == "right":
+            self.e.line("if gpu_id - 1 in ev_right:")
+            with self.e.indent():
+                self.e.line("streams[gpu_id].wait_event("
+                            "ev_right[gpu_id - 1])")
+        elif side == "left":
+            self.e.line("if gpu_id + 1 in ev_left:")
+            with self.e.indent():
+                self.e.line("streams[gpu_id].wait_event("
+                            "ev_left[gpu_id + 1])")
+
+    def visit_launch_per_gpu(self, op) -> None:
+        self.e.line(f"launch_{op.kernel_name.data}("
+                    "partitions_in[gpu_id], partitions_out[gpu_id])")
+
+    def visit_halo_exchange_pair(self, op) -> None:
+        self.e.line("halo_send_pair(partitions_out, i, i + 1, "
+                    "halo_width, split_axis, "
+                    "streams, ev_right, ev_left)")
+
+    # cutile_target dialect ------------------------------------------
+    def visit_for_each_gpu(self, op) -> None:
+        self.e.blank()
+        self.e.line("for gpu_id in range(num_gpus):")
+        with self.e.indent():
+            self.e.line("with cp.cuda.Device(gpu_id):")
+            with self.e.indent():
+                self.visit_region(op.body)
+
+    def visit_for_loop(self, op) -> None:
+        self.e.blank()
+        self.e.line(f"for i in range({op.count.data}):")
+        with self.e.indent():
+            self.visit_region(op.body)
+
+
 def _emit_step_body(e: CodeEmitter, region: Region, kernel_name: str) -> None:
     """Walk a step-body region and emit Python for each comm/cutile op."""
-    block = list(region.blocks)[0]
-    for op in block.ops:
-        if isinstance(op, GetHaloStateOp):
-            e.line("streams, ev_right, ev_left = get_halo_state("
-                   "num_gpus, halo_width)")
-        elif isinstance(op, ForEachGpuOp):
-            e.blank()
-            e.line("for gpu_id in range(num_gpus):")
-            with e.indent():
-                e.line("with cp.cuda.Device(gpu_id):")
-                with e.indent():
-                    inner = list(op.body.blocks)[0]
-                    for inner_op in inner.ops:
-                        if isinstance(inner_op, WaitNeighborEventOp):
-                            side = inner_op.side.data
-                            if side == "right":
-                                e.line("if gpu_id - 1 in ev_right:")
-                                with e.indent():
-                                    e.line("streams[gpu_id].wait_event("
-                                           "ev_right[gpu_id - 1])")
-                            elif side == "left":
-                                e.line("if gpu_id + 1 in ev_left:")
-                                with e.indent():
-                                    e.line("streams[gpu_id].wait_event("
-                                           "ev_left[gpu_id + 1])")
-                        elif isinstance(inner_op, LaunchPerGpuOp):
-                            kn = inner_op.kernel_name.data
-                            e.line(f"launch_{kn}("
-                                   "partitions_in[gpu_id], "
-                                   "partitions_out[gpu_id])")
-                        else:
-                            raise ValueError(
-                                f"Unsupported op in for_each_gpu body: {inner_op}"
-                            )
-        elif isinstance(op, ForLoopOp):
-            e.blank()
-            count = op.count.data
-            e.line(f"for i in range({count}):")
-            with e.indent():
-                inner = list(op.body.blocks)[0]
-                for inner_op in inner.ops:
-                    if isinstance(inner_op, HaloExchangePairOp):
-                        e.line("halo_send_pair(partitions_out, i, i + 1, "
-                               "halo_width, split_axis, "
-                               "streams, ev_right, ev_left)")
-                    else:
-                        raise ValueError(
-                            f"Unsupported op in for_loop body: {inner_op}"
-                        )
-        else:
-            raise ValueError(f"Unsupported op in step body: {op}")
+    visitor = _MultiGPUStepEmitter(e)
+    visitor.visit_region(region)
 
 
 def emit_multigpu_host_programs(host_programs: list[HostProgramOp]) -> str:
@@ -440,56 +445,66 @@ def build_cartesian_host_programs(
     return [setup, step, gather, launch]
 
 
+class _CartesianStepEmitter(IRVisitor):
+    """Walk a Cartesian step-body region via ``IRVisitor`` dispatch."""
+
+    def __init__(self, e: CodeEmitter) -> None:
+        self.e = e
+
+    # comm dialect (Cartesian) ----------------------------------------
+    def visit_get_cartesian_state(self, op) -> None:
+        self.e.line("streams, events, coords = "
+                    "get_cartesian_halo_state(topology, halo_widths)")
+
+    def visit_wait_cartesian_halo(self, op) -> None:
+        axis = op.axis.data
+        self.e.line(f"# axis {axis}: wait for halos arriving from neighbours")
+        self.e.line(f"_left_{axis} = _cart_neighbour(coords[rank], "
+                    f"topology, {axis}, -1)")
+        self.e.line(f"_right_{axis} = _cart_neighbour(coords[rank], "
+                    f"topology, {axis}, +1)")
+        self.e.line(f"if _left_{axis} is not None:")
+        with self.e.indent():
+            self.e.line(f"streams[rank].wait_event(events"
+                        f"[(_left_{axis}, {axis}, 'high')])")
+        self.e.line(f"if _right_{axis} is not None:")
+        with self.e.indent():
+            self.e.line(f"streams[rank].wait_event(events"
+                        f"[(_right_{axis}, {axis}, 'low')])")
+
+    def visit_launch_per_gpu(self, op) -> None:
+        self.e.line(f"launch_{op.kernel_name.data}("
+                    "in_parts[rank], out_parts[rank])")
+
+    def visit_cartesian_halo_send_axis(self, op) -> None:
+        axis = op.axis.data
+        self.e.blank()
+        self.e.line(f"# Halo send along axis {axis}")
+        self.e.line(f"cartesian_halo_send_axis(out_parts, coords, "
+                    f"topology, halo_widths, {axis}, streams, events)")
+
+    # cutile_target dialect ------------------------------------------
+    def visit_for_each_gpu(self, op) -> None:
+        self.e.blank()
+        self.e.line("for rank in range(_math.prod(topology)):")
+        with self.e.indent():
+            self.e.line("with cp.cuda.Device(rank):")
+            with self.e.indent():
+                self.visit_region(op.body)
+
+    def visit_for_loop(self, op) -> None:
+        # Cartesian halo sends are emitted straight-line; the
+        # ForLoopOp here is a structural marker (count=1) carrying
+        # axis-specific child ops.
+        self.visit_region(op.body)
+
+
 def _emit_cartesian_step_body(e: CodeEmitter, region: Region,
                               kernel_name: str,
                               topology: tuple[int, ...]) -> None:
     """Walk a Cartesian step body and emit Python."""
-    block = list(region.blocks)[0]
-    for op in block.ops:
-        if isinstance(op, GetCartesianStateOp):
-            e.line("streams, events, coords = "
-                   "get_cartesian_halo_state(topology, halo_widths)")
-        elif isinstance(op, ForEachGpuOp):
-            e.blank()
-            e.line("for rank in range(_math.prod(topology)):")
-            with e.indent():
-                e.line("with cp.cuda.Device(rank):")
-                with e.indent():
-                    inner = list(op.body.blocks)[0]
-                    for inner_op in inner.ops:
-                        if isinstance(inner_op, WaitCartesianHaloOp):
-                            axis = inner_op.axis.data
-                            e.line(f"# axis {axis}: wait for halos arriving from neighbours")
-                            e.line(f"_left_{axis} = _cart_neighbour(coords[rank], topology, {axis}, -1)")
-                            e.line(f"_right_{axis} = _cart_neighbour(coords[rank], topology, {axis}, +1)")
-                            e.line(f"if _left_{axis} is not None:")
-                            with e.indent():
-                                e.line(f"streams[rank].wait_event(events[(_left_{axis}, {axis}, 'high')])")
-                            e.line(f"if _right_{axis} is not None:")
-                            with e.indent():
-                                e.line(f"streams[rank].wait_event(events[(_right_{axis}, {axis}, 'low')])")
-                        elif isinstance(inner_op, LaunchPerGpuOp):
-                            kn = inner_op.kernel_name.data
-                            e.line(f"launch_{kn}(in_parts[rank], out_parts[rank])")
-                        else:
-                            raise ValueError(
-                                f"Unsupported op in Cartesian for_each_gpu body: {inner_op}"
-                            )
-        elif isinstance(op, ForLoopOp):
-            inner = list(op.body.blocks)[0]
-            for inner_op in inner.ops:
-                if isinstance(inner_op, CartesianHaloSendAxisOp):
-                    axis = inner_op.axis.data
-                    e.blank()
-                    e.line(f"# Halo send along axis {axis}")
-                    e.line(f"cartesian_halo_send_axis(out_parts, coords, "
-                           f"topology, halo_widths, {axis}, streams, events)")
-                else:
-                    raise ValueError(
-                        f"Unsupported op in Cartesian for_loop body: {inner_op}"
-                    )
-        else:
-            raise ValueError(f"Unsupported op in Cartesian step body: {op}")
+    visitor = _CartesianStepEmitter(e)
+    visitor.visit_region(region)
 
 
 def emit_cartesian_host_programs(host_programs: list[HostProgramOp]) -> str:
