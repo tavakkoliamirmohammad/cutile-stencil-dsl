@@ -2,6 +2,7 @@
 
 COLORS = {
     "cuTile-DSL": "#0072B2",
+    "cuTile-Graph": "#3399DD",
     "CuPy": "#D55E00",
     "JAX": "#009E73",
     "Devito": "#CC79A7",
@@ -12,6 +13,7 @@ COLORS = {
 
 MARKERS = {
     "cuTile-DSL": "o",
+    "cuTile-Graph": "o",
     "CuPy": "s",
     "JAX": "^",
     "Devito": "D",

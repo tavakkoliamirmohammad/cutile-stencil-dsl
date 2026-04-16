@@ -96,7 +96,8 @@ def get_halo_state(num_gpus: int, halo_width: int):
     - ``ev_left[j]``: event recorded on *j* after *j*->(j-1) halo send
 
     Cached so subsequent ``step`` calls on the same shape are
-    allocation-free.
+    allocation-free. Pre-prime via :func:`prime_halo_state` to inject
+    custom streams (e.g. for CUDA Graph capture).
     """
     key = (num_gpus, halo_width)
     state = _HALO_STATE_CACHE.get(key)
@@ -116,6 +117,32 @@ def get_halo_state(num_gpus: int, halo_width: int):
     state = (streams, ev_right, ev_left)
     _HALO_STATE_CACHE[key] = state
     return state
+
+
+def prime_halo_state(num_gpus: int, halo_width: int,
+                     streams: list, ev_right: dict, ev_left: dict) -> None:
+    """Override the cached halo-state with externally-built streams.
+
+    Used by :mod:`cutile.runtime.graph_helpers` to inject capture-aware
+    streams into the multi-GPU step path. The next call to
+    :func:`get_halo_state` for ``(num_gpus, halo_width)`` returns the
+    primed values instead of constructing fresh defaults.
+    """
+    _HALO_STATE_CACHE[(num_gpus, halo_width)] = (streams, ev_right, ev_left)
+
+
+def reset_halo_state(num_gpus: int | None = None,
+                     halo_width: int | None = None) -> None:
+    """Clear the halo-state cache (whole or one entry).
+
+    Useful between capture experiments or when the lifetime of an
+    underlying stream/event handle ends (e.g. captured streams are
+    destroyed at end of a benchmark).
+    """
+    if num_gpus is None or halo_width is None:
+        _HALO_STATE_CACHE.clear()
+    else:
+        _HALO_STATE_CACHE.pop((num_gpus, halo_width), None)
 
 
 def halo_send_pair(parts, i: int, j: int, halo_width: int, axis: int,

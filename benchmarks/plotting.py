@@ -124,6 +124,19 @@ def plot_throughput_vs_size(data: dict, outdir: Path):
             ax.semilogx(ct_sizes, ct_gps, "-o", color=COLORS["cuTile-DSL"],
                         label="cuTile-DSL", markersize=4)
 
+        # cuTile + CUDA Graph (if present)
+        cg_sizes = [r["npoints"] for r in rows
+                    if "cutile_graph" in r
+                    and "error" not in r.get("cutile_graph", {})]
+        cg_gps = [r["cutile_graph"]["gpoints_per_s"] for r in rows
+                  if "cutile_graph" in r
+                  and "error" not in r.get("cutile_graph", {})]
+        if cg_gps:
+            ax.semilogx(cg_sizes, cg_gps, "--o",
+                        color=COLORS.get("cuTile-Graph", "#0072B2"),
+                        label="cuTile + Graph", markersize=4,
+                        markerfacecolor="white")
+
         # Baselines
         for fw_key, display in [("cupy", "CuPy"), ("jax", "JAX"),
                                  ("devito", "Devito"), ("handwritten", "Hand-cuTile"),

@@ -86,6 +86,56 @@ def bench_cutile_stencil(name: str, domain: tuple[int, ...],
     }
 
 
+def bench_cutile_graph(name: str, domain: tuple[int, ...],
+                       warmup: int = 20, iters: int = 200,
+                       n_per_graph: int = 50) -> dict:
+    """Bench a cuTile stencil via CUDA-Graph captured loops.
+
+    Captures *n_per_graph* alternating launches into a graph, then
+    measures throughput by replaying the graph. This amortises the
+    ~5-10 µs of per-launch host overhead over many iterations and
+    restores DRAM-bound throughput at small domains.
+    """
+    from cutile.runtime.graph_helpers import capture_loop
+
+    meta = STENCIL_META[name]
+    sfn = meta["cutile_fn"]
+    result = stencil_compile(sfn, domain=domain, temporal_blocking=False)
+    mod = result.load_module()
+    launch = getattr(mod, f"launch_{result.name}")
+    shape = full_shape(domain, meta["halo"])
+
+    u = cp.random.randn(*shape).astype(cp.float64)
+    out = cp.zeros_like(u)
+    captured = capture_loop(launch, u, out, n_iters=n_per_graph)
+
+    for _ in range(warmup):
+        captured.replay()
+    captured.synchronize()
+
+    n_replays = max(iters // n_per_graph, 1)
+    e1, e2 = cp.cuda.Event(), cp.cuda.Event()
+    e1.record(captured.stream)
+    captured.replay(n_replays)
+    e2.record(captured.stream)
+    e2.synchronize()
+    total_iters = n_replays * n_per_graph
+    elapsed_ms = cp.cuda.get_elapsed_time(e1, e2) / total_iters
+
+    npts = interior_size(domain)
+    gps = npts / elapsed_ms * 1e-6
+    gbytes = npts * (meta["loads_per_point"] + meta["stores_per_point"]) * meta["dtype_bytes"] / elapsed_ms * 1e-6
+
+    return {
+        "framework": "cuTile-Graph",
+        "time_ms": elapsed_ms,
+        "gpoints_per_s": gps,
+        "gbytes_per_s": gbytes,
+        "n_per_graph": n_per_graph,
+        "tile_sizes": list(result.tile_sizes),
+    }
+
+
 def bench_cutile_multigpu(name: str, domain: tuple[int, ...], num_gpus: int,
                           warmup: int = 20, iters: int = 50) -> dict:
     """Benchmark cuTile with multi-GPU decomposition."""
@@ -158,6 +208,7 @@ def run_benchmarks(
     scaling_gpus: list[int] | None = None,
     warmup: int = 30,
     iters: int = 100,
+    graph_n: int | None = None,
 ) -> dict:
     """Run the full benchmark suite. Returns structured results dict."""
     if stencils is None:
@@ -200,6 +251,20 @@ def run_benchmarks(
             except Exception as e:
                 row["cutile_error"] = str(e)
                 print("cuTile=ERR", end=" ")
+
+            # cuTile + CUDA Graph (amortises per-launch host overhead)
+            if graph_n:
+                try:
+                    g_result = bench_cutile_graph(
+                        sname, domain, warmup=warmup, iters=iters,
+                        n_per_graph=graph_n,
+                    )
+                    row["cutile_graph"] = g_result
+                    print(f"graph={g_result['gpoints_per_s']:.2f} GP/s",
+                          end=" ")
+                except Exception as e:
+                    row["cutile_graph_error"] = str(e)
+                    print("graph=ERR", end=" ")
 
             # Baselines
             for bl in baselines:
@@ -259,6 +324,10 @@ def main():
                         help="Output JSON file")
     parser.add_argument("--warmup", type=int, default=30)
     parser.add_argument("--iters", type=int, default=100)
+    parser.add_argument("--graph", type=int, metavar="N", default=None,
+                        help="Also bench cuTile via CUDA-Graph capture, "
+                             "recording N kernel launches per graph "
+                             "(amortises ~5-10 us host overhead).")
 
     args = parser.parse_args()
 
@@ -272,6 +341,7 @@ def main():
         scaling_gpus=args.scaling,
         warmup=args.warmup,
         iters=args.iters,
+        graph_n=args.graph,
     )
 
     out_path = Path(args.output)
