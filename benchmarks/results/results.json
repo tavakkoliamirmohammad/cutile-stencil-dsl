@@ -1,0 +1,1657 @@
+{
+  "gpu": {
+    "name": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+    "n_gpus": 4,
+    "peak_bw_gbs": 1469.6036328210932
+  },
+  "timestamp": "2026-04-16 13:56:50",
+  "warmup": 30,
+  "iters": 100,
+  "baselines": [
+    "cupy",
+    "jax",
+    "handwritten",
+    "cuda",
+    "cuda_smem"
+  ],
+  "results": [
+    {
+      "stencil": "heat_1d",
+      "ndim": 1,
+      "domain": [
+        65536
+      ],
+      "npoints": 65536,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.005987840294837951,
+        "gpoints_per_s": 10.944847686819209,
+        "gbytes_per_s": 350.2351259782147,
+        "tile_sizes": [
+          512
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "heat_1d",
+        "framework": "CuPy",
+        "time_ms": 0.04901375770568848,
+        "gpoints_per_s": 1.3370939725438347,
+        "gbytes_per_s": 42.78700712140271
+      },
+      "jax": {
+        "name": "heat_1d",
+        "framework": "JAX",
+        "time_ms": 0.05185697227716446,
+        "gpoints_per_s": 1.263783771442036,
+        "gbytes_per_s": 40.44108068614515
+      },
+      "handwritten": {
+        "framework": "handwritten",
+        "error": "No hand-written kernel for 'heat_1d'. Available: ['heat_2d', 'laplacian_2d_5pt', 'laplacian_3d_7pt']"
+      },
+      "cuda": {
+        "name": "heat_1d",
+        "framework": "CUDA-naive",
+        "time_ms": 0.0041312000155448916,
+        "gpoints_per_s": 15.863671512732605,
+        "gbytes_per_s": 507.63748840744336
+      },
+      "cuda_smem": {
+        "name": "heat_1d",
+        "framework": "CUDA-smem",
+        "time_ms": 0.004069760143756866,
+        "gpoints_per_s": 16.103160305536477,
+        "gbytes_per_s": 515.3011297771673
+      }
+    },
+    {
+      "stencil": "heat_1d",
+      "ndim": 1,
+      "domain": [
+        262144
+      ],
+      "npoints": 262144,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.005971840023994446,
+        "gpoints_per_s": 43.896688281454836,
+        "gbytes_per_s": 1404.6940250065547,
+        "tile_sizes": [
+          256
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "heat_1d",
+        "framework": "CuPy",
+        "time_ms": 0.049616641998291015,
+        "gpoints_per_s": 5.283388585810164,
+        "gbytes_per_s": 169.06843474592526
+      },
+      "jax": {
+        "name": "heat_1d",
+        "framework": "JAX",
+        "time_ms": 0.046514905989170074,
+        "gpoints_per_s": 5.6356988028963055,
+        "gbytes_per_s": 180.34236169268178
+      },
+      "handwritten": {
+        "framework": "handwritten",
+        "error": "No hand-written kernel for 'heat_1d'. Available: ['heat_2d', 'laplacian_2d_5pt', 'laplacian_3d_7pt']"
+      },
+      "cuda": {
+        "name": "heat_1d",
+        "framework": "CUDA-naive",
+        "time_ms": 0.0042774400115013125,
+        "gpoints_per_s": 61.285254567016516,
+        "gbytes_per_s": 1961.1281461445285
+      },
+      "cuda_smem": {
+        "name": "heat_1d",
+        "framework": "CUDA-smem",
+        "time_ms": 0.0041715198755264285,
+        "gpoints_per_s": 62.841364256215726,
+        "gbytes_per_s": 2010.9236561989032
+      }
+    },
+    {
+      "stencil": "heat_1d",
+      "ndim": 1,
+      "domain": [
+        1048576
+      ],
+      "npoints": 1048576,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.008277440071105957,
+        "gpoints_per_s": 126.67877882441722,
+        "gbytes_per_s": 4053.720922381351,
+        "tile_sizes": [
+          128
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "heat_1d",
+        "framework": "CuPy",
+        "time_ms": 0.04954304218292236,
+        "gpoints_per_s": 21.164949785046655,
+        "gbytes_per_s": 677.278393121493
+      },
+      "jax": {
+        "name": "heat_1d",
+        "framework": "JAX",
+        "time_ms": 0.04656519740819931,
+        "gpoints_per_s": 22.518448505822594,
+        "gbytes_per_s": 720.590352186323
+      },
+      "handwritten": {
+        "framework": "handwritten",
+        "error": "No hand-written kernel for 'heat_1d'. Available: ['heat_2d', 'laplacian_2d_5pt', 'laplacian_3d_7pt']"
+      },
+      "cuda": {
+        "name": "heat_1d",
+        "framework": "CUDA-naive",
+        "time_ms": 0.006328960061073303,
+        "gpoints_per_s": 165.67903571541518,
+        "gbytes_per_s": 5301.729142893286
+      },
+      "cuda_smem": {
+        "name": "heat_1d",
+        "framework": "CUDA-smem",
+        "time_ms": 0.006234560012817383,
+        "gpoints_per_s": 168.187650426698,
+        "gbytes_per_s": 5382.004813654336
+      }
+    },
+    {
+      "stencil": "heat_1d",
+      "ndim": 1,
+      "domain": [
+        4194304
+      ],
+      "npoints": 4194304,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.0206112003326416,
+        "gpoints_per_s": 203.49634821401222,
+        "gbytes_per_s": 6511.883142848391,
+        "tile_sizes": [
+          256
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "heat_1d",
+        "framework": "CuPy",
+        "time_ms": 0.10485983848571777,
+        "gpoints_per_s": 39.999146103694194,
+        "gbytes_per_s": 1279.9726753182142
+      },
+      "jax": {
+        "name": "heat_1d",
+        "framework": "JAX",
+        "time_ms": 0.04627462476491928,
+        "gpoints_per_s": 90.63939516111851,
+        "gbytes_per_s": 2900.4606451557925
+      },
+      "handwritten": {
+        "framework": "handwritten",
+        "error": "No hand-written kernel for 'heat_1d'. Available: ['heat_2d', 'laplacian_2d_5pt', 'laplacian_3d_7pt']"
+      },
+      "cuda": {
+        "name": "heat_1d",
+        "framework": "CUDA-naive",
+        "time_ms": 0.02057120084762573,
+        "gpoints_per_s": 203.89203484365834,
+        "gbytes_per_s": 6524.545114997067
+      },
+      "cuda_smem": {
+        "name": "heat_1d",
+        "framework": "CUDA-smem",
+        "time_ms": 0.020539839267730713,
+        "gpoints_per_s": 204.20335063621926,
+        "gbytes_per_s": 6534.507220359016
+      }
+    },
+    {
+      "stencil": "heat_1d",
+      "ndim": 1,
+      "domain": [
+        16777216
+      ],
+      "npoints": 16777216,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.18148704528808593,
+        "gpoints_per_s": 92.44304998942738,
+        "gbytes_per_s": 2958.177599661676,
+        "tile_sizes": [
+          128
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "heat_1d",
+        "framework": "CuPy",
+        "time_ms": 1.07276611328125,
+        "gpoints_per_s": 15.639211373561974,
+        "gbytes_per_s": 500.45476395398316
+      },
+      "jax": {
+        "name": "heat_1d",
+        "framework": "JAX",
+        "time_ms": 0.07546786218881607,
+        "gpoints_per_s": 222.30941109772542,
+        "gbytes_per_s": 7113.901155127213
+      },
+      "handwritten": {
+        "framework": "handwritten",
+        "error": "No hand-written kernel for 'heat_1d'. Available: ['heat_2d', 'laplacian_2d_5pt', 'laplacian_3d_7pt']"
+      },
+      "cuda": {
+        "name": "heat_1d",
+        "framework": "CUDA-naive",
+        "time_ms": 0.1816499137878418,
+        "gpoints_per_s": 92.36016494670604,
+        "gbytes_per_s": 2955.525278294593
+      },
+      "cuda_smem": {
+        "name": "heat_1d",
+        "framework": "CUDA-smem",
+        "time_ms": 0.1814569664001465,
+        "gpoints_per_s": 92.4583736454797,
+        "gbytes_per_s": 2958.6679566553503
+      }
+    },
+    {
+      "stencil": "heat_2d",
+      "ndim": 2,
+      "domain": [
+        256,
+        256
+      ],
+      "npoints": 65536,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.006012799739837646,
+        "gpoints_per_s": 10.899415053821427,
+        "gbytes_per_s": 435.976602152857,
+        "tile_sizes": [
+          16,
+          16
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "heat_2d",
+        "framework": "CuPy",
+        "time_ms": 0.044411840438842776,
+        "gpoints_per_s": 1.4756425167798708,
+        "gbytes_per_s": 59.02570067119483
+      },
+      "jax": {
+        "name": "heat_2d",
+        "framework": "JAX",
+        "time_ms": 0.046819914132356644,
+        "gpoints_per_s": 1.3997462664013924,
+        "gbytes_per_s": 55.989850656055694
+      },
+      "handwritten": {
+        "name": "heat_2d",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.006131520271301269,
+        "gpoints_per_s": 10.688376960399665,
+        "gbytes_per_s": 427.5350784159866
+      },
+      "cuda": {
+        "name": "heat_2d",
+        "framework": "CUDA-naive",
+        "time_ms": 0.004467839896678924,
+        "gpoints_per_s": 14.668385957320185,
+        "gbytes_per_s": 586.7354382928074
+      },
+      "cuda_smem": {
+        "name": "heat_2d",
+        "framework": "CUDA-smem",
+        "time_ms": 0.004553920030593872,
+        "gpoints_per_s": 14.391117885189018,
+        "gbytes_per_s": 575.6447154075606
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.006012799739837646,
+          "gpoints_per_s": 10.899415053821427,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.047418419271707535,
+          "gpoints_per_s": 1.382078968606666,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.1305396482348442,
+          "gpoints_per_s": 0.5020390424378885,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "heat_2d",
+      "ndim": 2,
+      "domain": [
+        512,
+        512
+      ],
+      "npoints": 262144,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.006087679862976075,
+        "gpoints_per_s": 43.06139710044576,
+        "gbytes_per_s": 1722.4558840178306,
+        "tile_sizes": [
+          16,
+          8
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "heat_2d",
+        "framework": "CuPy",
+        "time_ms": 0.04461696147918701,
+        "gpoints_per_s": 5.875433720924391,
+        "gbytes_per_s": 235.01734883697566
+      },
+      "jax": {
+        "name": "heat_2d",
+        "framework": "JAX",
+        "time_ms": 0.04586344584822655,
+        "gpoints_per_s": 5.715750204803606,
+        "gbytes_per_s": 228.63000819214423
+      },
+      "handwritten": {
+        "name": "heat_2d",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.00632319986820221,
+        "gpoints_per_s": 41.457490742662834,
+        "gbytes_per_s": 1658.2996297065135
+      },
+      "cuda": {
+        "name": "heat_2d",
+        "framework": "CUDA-naive",
+        "time_ms": 0.006157119870185852,
+        "gpoints_per_s": 42.575750598808334,
+        "gbytes_per_s": 1703.0300239523333
+      },
+      "cuda_smem": {
+        "name": "heat_2d",
+        "framework": "CUDA-smem",
+        "time_ms": 0.008254719972610474,
+        "gpoints_per_s": 31.75686163428988,
+        "gbytes_per_s": 1270.2744653715954
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.006087679862976075,
+          "gpoints_per_s": 43.06139710044576,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.04818776622414589,
+          "gpoints_per_s": 5.440052954117742,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.1303543522953987,
+          "gpoints_per_s": 2.0110107210379136,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "heat_2d",
+      "ndim": 2,
+      "domain": [
+        1024,
+        1024
+      ],
+      "npoints": 1048576,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.00835744023323059,
+        "gpoints_per_s": 125.46616795782579,
+        "gbytes_per_s": 5018.646718313032,
+        "tile_sizes": [
+          16,
+          16
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "heat_2d",
+        "framework": "CuPy",
+        "time_ms": 0.04501728057861328,
+        "gpoints_per_s": 23.292744175625643,
+        "gbytes_per_s": 931.7097670250258
+      },
+      "jax": {
+        "name": "heat_2d",
+        "framework": "JAX",
+        "time_ms": 0.046975910663604736,
+        "gpoints_per_s": 22.32156833550008,
+        "gbytes_per_s": 892.8627334200031
+      },
+      "handwritten": {
+        "name": "heat_2d",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.010359359979629517,
+        "gpoints_per_s": 101.2201527953371,
+        "gbytes_per_s": 4048.806111813484
+      },
+      "cuda": {
+        "name": "heat_2d",
+        "framework": "CUDA-naive",
+        "time_ms": 0.014395840167999267,
+        "gpoints_per_s": 72.83881925355739,
+        "gbytes_per_s": 2913.5527701422957
+      },
+      "cuda_smem": {
+        "name": "heat_2d",
+        "framework": "CUDA-smem",
+        "time_ms": 0.018500159978866577,
+        "gpoints_per_s": 56.67929364923479,
+        "gbytes_per_s": 2267.171745969392
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.00835744023323059,
+          "gpoints_per_s": 125.46616795782579,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.048890020698308945,
+          "gpoints_per_s": 21.447648927591253,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.13479182496666908,
+          "gpoints_per_s": 7.779225485368186,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "heat_2d",
+      "ndim": 2,
+      "domain": [
+        2048,
+        2048
+      ],
+      "npoints": 4194304,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.02676352024078369,
+        "gpoints_per_s": 156.7172017083348,
+        "gbytes_per_s": 6268.688068333394,
+        "tile_sizes": [
+          16,
+          16
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "heat_2d",
+        "framework": "CuPy",
+        "time_ms": 0.0839795207977295,
+        "gpoints_per_s": 49.94436691419414,
+        "gbytes_per_s": 1997.7746765677657
+      },
+      "jax": {
+        "name": "heat_2d",
+        "framework": "JAX",
+        "time_ms": 0.05459645763039589,
+        "gpoints_per_s": 76.82373879262222,
+        "gbytes_per_s": 3072.9495517048886
+      },
+      "handwritten": {
+        "name": "heat_2d",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.027039999961853026,
+        "gpoints_per_s": 155.11479311823814,
+        "gbytes_per_s": 6204.5917247295265
+      },
+      "cuda": {
+        "name": "heat_2d",
+        "framework": "CUDA-naive",
+        "time_ms": 0.0471884822845459,
+        "gpoints_per_s": 88.88406231648656,
+        "gbytes_per_s": 3555.362492659463
+      },
+      "cuda_smem": {
+        "name": "heat_2d",
+        "framework": "CUDA-smem",
+        "time_ms": 0.06152383804321289,
+        "gpoints_per_s": 68.17364022468851,
+        "gbytes_per_s": 2726.9456089875407
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.02676352024078369,
+          "gpoints_per_s": 156.7172017083348,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.0684618204832077,
+          "gpoints_per_s": 61.26486223118735,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.13111330568790436,
+          "gpoints_per_s": 31.989918780508166,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "heat_2d",
+      "ndim": 2,
+      "domain": [
+        4096,
+        4096
+      ],
+      "npoints": 16777216,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.18928607940673828,
+        "gpoints_per_s": 88.63417770912295,
+        "gbytes_per_s": 3545.3671083649183,
+        "tile_sizes": [
+          16,
+          128
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "heat_2d",
+        "framework": "CuPy",
+        "time_ms": 0.8899222564697266,
+        "gpoints_per_s": 18.852451299009317,
+        "gbytes_per_s": 754.0980519603727
+      },
+      "jax": {
+        "name": "heat_2d",
+        "framework": "JAX",
+        "time_ms": 0.09083142504096031,
+        "gpoints_per_s": 184.70717587480692,
+        "gbytes_per_s": 7388.287034992278
+      },
+      "handwritten": {
+        "name": "heat_2d",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.19382783889770508,
+        "gpoints_per_s": 86.55730825567515,
+        "gbytes_per_s": 3462.292330227006
+      },
+      "cuda": {
+        "name": "heat_2d",
+        "framework": "CUDA-naive",
+        "time_ms": 0.20445823669433594,
+        "gpoints_per_s": 82.05693383280935,
+        "gbytes_per_s": 3282.2773533123745
+      },
+      "cuda_smem": {
+        "name": "heat_2d",
+        "framework": "CUDA-smem",
+        "time_ms": 0.2502547264099121,
+        "gpoints_per_s": 67.04055599940705,
+        "gbytes_per_s": 2681.6222399762814
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.18928607940673828,
+          "gpoints_per_s": 88.63417770912295,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.1138998381793499,
+          "gpoints_per_s": 147.29797924367654,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.1544257067143917,
+          "gpoints_per_s": 108.64263701269141,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_2d_5pt",
+      "ndim": 2,
+      "domain": [
+        256,
+        256
+      ],
+      "npoints": 65536,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.005951039791107178,
+        "gpoints_per_s": 11.01252928907188,
+        "gbytes_per_s": 528.6014058754503,
+        "tile_sizes": [
+          32,
+          8
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CuPy",
+        "time_ms": 0.056062722206115724,
+        "gpoints_per_s": 1.16897641464957,
+        "gbytes_per_s": 56.11086790317937
+      },
+      "jax": {
+        "name": "laplacian_2d_5pt",
+        "framework": "JAX",
+        "time_ms": 0.04660990089178085,
+        "gpoints_per_s": 1.4060531935513416,
+        "gbytes_per_s": 67.4905532904644
+      },
+      "handwritten": {
+        "name": "laplacian_2d_5pt",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.006150720119476319,
+        "gpoints_per_s": 10.655012539504044,
+        "gbytes_per_s": 511.4406018961942
+      },
+      "cuda": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CUDA-naive",
+        "time_ms": 0.004444159865379334,
+        "gpoints_per_s": 14.746544225498093,
+        "gbytes_per_s": 707.8341228239084
+      },
+      "cuda_smem": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CUDA-smem",
+        "time_ms": 0.004501439929008484,
+        "gpoints_per_s": 14.558896938214918,
+        "gbytes_per_s": 698.827053034316
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.005951039791107178,
+          "gpoints_per_s": 11.01252928907188,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.047903936356306076,
+          "gpoints_per_s": 1.3680712898528398,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.13022053986787796,
+          "gpoints_per_s": 0.5032693004229053,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_2d_5pt",
+      "ndim": 2,
+      "domain": [
+        512,
+        512
+      ],
+      "npoints": 262144,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.006129919886589051,
+        "gpoints_per_s": 42.764669824399306,
+        "gbytes_per_s": 2052.7041515711667,
+        "tile_sizes": [
+          8,
+          64
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CuPy",
+        "time_ms": 0.056150717735290526,
+        "gpoints_per_s": 4.668577901992576,
+        "gbytes_per_s": 224.09173929564366
+      },
+      "jax": {
+        "name": "laplacian_2d_5pt",
+        "framework": "JAX",
+        "time_ms": 0.04911888390779495,
+        "gpoints_per_s": 5.336929081941108,
+        "gbytes_per_s": 256.17259593317317
+      },
+      "handwritten": {
+        "name": "laplacian_2d_5pt",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.006344959735870361,
+        "gpoints_per_s": 41.31531340033646,
+        "gbytes_per_s": 1983.13504321615
+      },
+      "cuda": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CUDA-naive",
+        "time_ms": 0.0061673599481582644,
+        "gpoints_per_s": 42.505059247966074,
+        "gbytes_per_s": 2040.2428439023713
+      },
+      "cuda_smem": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CUDA-smem",
+        "time_ms": 0.00822816014289856,
+        "gpoints_per_s": 31.859370193013003,
+        "gbytes_per_s": 1529.2497692646243
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.006129919886589051,
+          "gpoints_per_s": 42.764669824399306,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.04712536931037903,
+          "gpoints_per_s": 5.562693806672506,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.1298273541033268,
+          "gpoints_per_s": 2.019173862169025,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_2d_5pt",
+      "ndim": 2,
+      "domain": [
+        1024,
+        1024
+      ],
+      "npoints": 1048576,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.01035040020942688,
+        "gpoints_per_s": 101.30777349507547,
+        "gbytes_per_s": 4862.773127763622,
+        "tile_sizes": [
+          16,
+          8
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CuPy",
+        "time_ms": 0.056174402236938474,
+        "gpoints_per_s": 18.666438061542742,
+        "gbytes_per_s": 895.9890269540515
+      },
+      "jax": {
+        "name": "laplacian_2d_5pt",
+        "framework": "JAX",
+        "time_ms": 0.04597892984747887,
+        "gpoints_per_s": 22.80557645596216,
+        "gbytes_per_s": 1094.6676698861836
+      },
+      "handwritten": {
+        "name": "laplacian_2d_5pt",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.012371519804000855,
+        "gpoints_per_s": 84.75725024995704,
+        "gbytes_per_s": 4068.348011997938
+      },
+      "cuda": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CUDA-naive",
+        "time_ms": 0.014401919841766357,
+        "gpoints_per_s": 72.80807083504742,
+        "gbytes_per_s": 3494.7874000822767
+      },
+      "cuda_smem": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CUDA-smem",
+        "time_ms": 0.018504960536956785,
+        "gpoints_per_s": 56.66458990311592,
+        "gbytes_per_s": 2719.900315349564
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.01035040020942688,
+          "gpoints_per_s": 101.30777349507547,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.049482304602861404,
+          "gpoints_per_s": 21.190928927335452,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.12976547703146935,
+          "gpoints_per_s": 8.08054672157303,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_2d_5pt",
+      "ndim": 2,
+      "domain": [
+        2048,
+        2048
+      ],
+      "npoints": 4194304,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.03286463975906372,
+        "gpoints_per_s": 127.62361099190977,
+        "gbytes_per_s": 6125.9333276116695,
+        "tile_sizes": [
+          8,
+          128
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CuPy",
+        "time_ms": 0.1106499195098877,
+        "gpoints_per_s": 37.90607366528808,
+        "gbytes_per_s": 1819.491535933828
+      },
+      "jax": {
+        "name": "laplacian_2d_5pt",
+        "framework": "JAX",
+        "time_ms": 0.0475812703371048,
+        "gpoints_per_s": 88.15031566589344,
+        "gbytes_per_s": 4231.215151962885
+      },
+      "handwritten": {
+        "name": "laplacian_2d_5pt",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.03293760061264038,
+        "gpoints_per_s": 127.34090893039618,
+        "gbytes_per_s": 6112.363628659016
+      },
+      "cuda": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CUDA-naive",
+        "time_ms": 0.047218241691589356,
+        "gpoints_per_s": 88.82804292873746,
+        "gbytes_per_s": 4263.746060579398
+      },
+      "cuda_smem": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CUDA-smem",
+        "time_ms": 0.06139679908752441,
+        "gpoints_per_s": 68.31470145570286,
+        "gbytes_per_s": 3279.105669873737
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.03286463975906372,
+          "gpoints_per_s": 127.62361099190977,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.062093045562505715,
+          "gpoints_per_s": 67.54869183824815,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.13091819360852242,
+          "gpoints_per_s": 32.03759450380136,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_2d_5pt",
+      "ndim": 2,
+      "domain": [
+        4096,
+        4096
+      ],
+      "npoints": 16777216,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.19115007400512696,
+        "gpoints_per_s": 87.76986400512723,
+        "gbytes_per_s": 4212.953472246108,
+        "tile_sizes": [
+          8,
+          128
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CuPy",
+        "time_ms": 1.1551894378662109,
+        "gpoints_per_s": 14.523346085114625,
+        "gbytes_per_s": 697.120612085502
+      },
+      "jax": {
+        "name": "laplacian_2d_5pt",
+        "framework": "JAX",
+        "time_ms": 0.08591404184699059,
+        "gpoints_per_s": 195.27909104636862,
+        "gbytes_per_s": 9373.396370225695
+      },
+      "handwritten": {
+        "name": "laplacian_2d_5pt",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.1924176025390625,
+        "gpoints_per_s": 87.19169025398325,
+        "gbytes_per_s": 4185.201132191196
+      },
+      "cuda": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CUDA-naive",
+        "time_ms": 0.20736640930175781,
+        "gpoints_per_s": 80.90614124289503,
+        "gbytes_per_s": 3883.4947796589618
+      },
+      "cuda_smem": {
+        "name": "laplacian_2d_5pt",
+        "framework": "CUDA-smem",
+        "time_ms": 0.2503628730773926,
+        "gpoints_per_s": 67.01159718203824,
+        "gbytes_per_s": 3216.556664737836
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.19115007400512696,
+          "gpoints_per_s": 87.76986400512723,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.11339748278260231,
+          "gpoints_per_s": 147.95051519939025,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.15419576317071915,
+          "gpoints_per_s": 108.80464971936331,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_2d_9pt",
+      "ndim": 2,
+      "domain": [
+        256,
+        256
+      ],
+      "npoints": 65536,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.0061209601163864135,
+        "gpoints_per_s": 10.706817027700225,
+        "gbytes_per_s": 856.5453622160179,
+        "tile_sizes": [
+          8,
+          32
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_2d_9pt",
+        "framework": "CuPy",
+        "time_ms": 0.18944543838500977,
+        "gpoints_per_s": 0.345936014921675,
+        "gbytes_per_s": 27.674881193734
+      },
+      "jax": {
+        "name": "laplacian_2d_9pt",
+        "framework": "JAX",
+        "time_ms": 0.048352405428886414,
+        "gpoints_per_s": 1.3553824141466158,
+        "gbytes_per_s": 108.43059313172925
+      },
+      "handwritten": {
+        "framework": "handwritten",
+        "error": "No hand-written kernel for 'laplacian_2d_9pt'. Available: ['heat_2d', 'laplacian_2d_5pt', 'laplacian_3d_7pt']"
+      },
+      "cuda": {
+        "framework": "cuda",
+        "error": "No CUDA kernel for 'laplacian_2d_9pt'/naive"
+      },
+      "cuda_smem": {
+        "framework": "cuda_smem",
+        "error": "No CUDA kernel for 'laplacian_2d_9pt'/smem"
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.0061209601163864135,
+          "gpoints_per_s": 10.706817027700225,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.04729662090539932,
+          "gpoints_per_s": 1.3856381015270056,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.1304583065211773,
+          "gpoints_per_s": 0.5023520674734616,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_2d_9pt",
+      "ndim": 2,
+      "domain": [
+        512,
+        512
+      ],
+      "npoints": 262144,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.008395519852638245,
+        "gpoints_per_s": 31.224272540743584,
+        "gbytes_per_s": 2497.9418032594867,
+        "tile_sizes": [
+          16,
+          8
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_2d_9pt",
+        "framework": "CuPy",
+        "time_ms": 0.18680992126464843,
+        "gpoints_per_s": 1.4032659412592325,
+        "gbytes_per_s": 112.2612753007386
+      },
+      "jax": {
+        "name": "laplacian_2d_9pt",
+        "framework": "JAX",
+        "time_ms": 0.05119200795888901,
+        "gpoints_per_s": 5.120799328881984,
+        "gbytes_per_s": 409.6639463105587
+      },
+      "handwritten": {
+        "framework": "handwritten",
+        "error": "No hand-written kernel for 'laplacian_2d_9pt'. Available: ['heat_2d', 'laplacian_2d_5pt', 'laplacian_3d_7pt']"
+      },
+      "cuda": {
+        "framework": "cuda",
+        "error": "No CUDA kernel for 'laplacian_2d_9pt'/naive"
+      },
+      "cuda_smem": {
+        "framework": "cuda_smem",
+        "error": "No CUDA kernel for 'laplacian_2d_9pt'/smem"
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.008395519852638245,
+          "gpoints_per_s": 31.224272540743584,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.050931088626384735,
+          "gpoints_per_s": 5.147033120045992,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.13266941532492638,
+          "gpoints_per_s": 1.9759188608615772,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_2d_9pt",
+      "ndim": 2,
+      "domain": [
+        1024,
+        1024
+      ],
+      "npoints": 1048576,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.028791680335998535,
+        "gpoints_per_s": 36.419409626778695,
+        "gbytes_per_s": 2913.5527701422957,
+        "tile_sizes": [
+          8,
+          32
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_2d_9pt",
+        "framework": "CuPy",
+        "time_ms": 0.18743295669555665,
+        "gpoints_per_s": 5.594405693034974,
+        "gbytes_per_s": 447.55245544279796
+      },
+      "jax": {
+        "name": "laplacian_2d_9pt",
+        "framework": "JAX",
+        "time_ms": 0.05204789340496063,
+        "gpoints_per_s": 20.14636772792155,
+        "gbytes_per_s": 1611.7094182337244
+      },
+      "handwritten": {
+        "framework": "handwritten",
+        "error": "No hand-written kernel for 'laplacian_2d_9pt'. Available: ['heat_2d', 'laplacian_2d_5pt', 'laplacian_3d_7pt']"
+      },
+      "cuda": {
+        "framework": "cuda",
+        "error": "No CUDA kernel for 'laplacian_2d_9pt'/naive"
+      },
+      "cuda_smem": {
+        "framework": "cuda_smem",
+        "error": "No CUDA kernel for 'laplacian_2d_9pt'/smem"
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.028791680335998535,
+          "gpoints_per_s": 36.419409626778695,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.06283093243837357,
+          "gpoints_per_s": 16.688849891388678,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.13269687071442604,
+          "gpoints_per_s": 7.902040148758419,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_2d_9pt",
+      "ndim": 2,
+      "domain": [
+        2048,
+        2048
+      ],
+      "npoints": 4194304,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.1031334400177002,
+        "gpoints_per_s": 40.668710355052205,
+        "gbytes_per_s": 3253.4968284041765,
+        "tile_sizes": [
+          16,
+          8
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_2d_9pt",
+        "framework": "CuPy",
+        "time_ms": 0.39254974365234374,
+        "gpoints_per_s": 10.684770701861998,
+        "gbytes_per_s": 854.7816561489598
+      },
+      "jax": {
+        "name": "laplacian_2d_9pt",
+        "framework": "JAX",
+        "time_ms": 0.07292395457625389,
+        "gpoints_per_s": 57.516134778650425,
+        "gbytes_per_s": 4601.290782292034
+      },
+      "handwritten": {
+        "framework": "handwritten",
+        "error": "No hand-written kernel for 'laplacian_2d_9pt'. Available: ['heat_2d', 'laplacian_2d_5pt', 'laplacian_3d_7pt']"
+      },
+      "cuda": {
+        "framework": "cuda",
+        "error": "No CUDA kernel for 'laplacian_2d_9pt'/naive"
+      },
+      "cuda_smem": {
+        "framework": "cuda_smem",
+        "error": "No CUDA kernel for 'laplacian_2d_9pt'/smem"
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.1031334400177002,
+          "gpoints_per_s": 40.668710355052205,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.10007988661527634,
+          "gpoints_per_s": 41.90955987114173,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.14996077865362167,
+          "gpoints_per_s": 27.969339967805666,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_2d_9pt",
+      "ndim": 2,
+      "domain": [
+        4096,
+        4096
+      ],
+      "npoints": 16777216,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.4011238479614258,
+        "gpoints_per_s": 41.82552616919796,
+        "gbytes_per_s": 3346.042093535837,
+        "tile_sizes": [
+          16,
+          8
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_2d_9pt",
+        "framework": "CuPy",
+        "time_ms": 3.824482421875,
+        "gpoints_per_s": 4.386793858441833,
+        "gbytes_per_s": 350.94350867534666
+      },
+      "jax": {
+        "name": "laplacian_2d_9pt",
+        "framework": "JAX",
+        "time_ms": 0.1125996932387352,
+        "gpoints_per_s": 148.99877182106303,
+        "gbytes_per_s": 11919.901745685043
+      },
+      "handwritten": {
+        "framework": "handwritten",
+        "error": "No hand-written kernel for 'laplacian_2d_9pt'. Available: ['heat_2d', 'laplacian_2d_5pt', 'laplacian_3d_7pt']"
+      },
+      "cuda": {
+        "framework": "cuda",
+        "error": "No CUDA kernel for 'laplacian_2d_9pt'/naive"
+      },
+      "cuda_smem": {
+        "framework": "cuda_smem",
+        "error": "No CUDA kernel for 'laplacian_2d_9pt'/smem"
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.4011238479614258,
+          "gpoints_per_s": 41.82552616919796,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.2582551911473274,
+          "gpoints_per_s": 64.96371254132531,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.22878054529428482,
+          "gpoints_per_s": 73.33322848067849,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_3d_7pt",
+      "ndim": 3,
+      "domain": [
+        32,
+        32,
+        32
+      ],
+      "npoints": 32768,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.006292160153388977,
+        "gpoints_per_s": 5.207750470615573,
+        "gbytes_per_s": 333.2960301193967,
+        "tile_sizes": [
+          32,
+          4,
+          4
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_3d_7pt",
+        "framework": "CuPy",
+        "time_ms": 0.07876031875610351,
+        "gpoints_per_s": 0.4160470718950798,
+        "gbytes_per_s": 26.627012601285106
+      },
+      "jax": {
+        "name": "laplacian_3d_7pt",
+        "framework": "JAX",
+        "time_ms": 0.048669055104255676,
+        "gpoints_per_s": 0.6732820255048413,
+        "gbytes_per_s": 43.09004963230984
+      },
+      "handwritten": {
+        "name": "laplacian_3d_7pt",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.006579520106315613,
+        "gpoints_per_s": 4.980302433994591,
+        "gbytes_per_s": 318.73935577565385
+      },
+      "cuda": {
+        "name": "laplacian_3d_7pt",
+        "framework": "CUDA-naive",
+        "time_ms": 0.00459199994802475,
+        "gpoints_per_s": 7.1358885825108,
+        "gbytes_per_s": 456.6968692806912
+      },
+      "cuda_smem": {
+        "name": "laplacian_3d_7pt",
+        "framework": "CUDA-smem",
+        "time_ms": 0.004704639911651611,
+        "gpoints_per_s": 6.96503890103174,
+        "gbytes_per_s": 445.76248966603134
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.006292160153388977,
+          "gpoints_per_s": 5.207750470615573,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.04935411736369133,
+          "gpoints_per_s": 0.6639365011541397,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.13799119740724564,
+          "gpoints_per_s": 0.2374644224826432,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_3d_7pt",
+      "ndim": 3,
+      "domain": [
+        64,
+        64,
+        64
+      ],
+      "npoints": 262144,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.006226239800453186,
+        "gpoints_per_s": 42.10310049107319,
+        "gbytes_per_s": 2694.5984314286843,
+        "tile_sizes": [
+          32,
+          4,
+          4
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_3d_7pt",
+        "framework": "CuPy",
+        "time_ms": 0.0783897590637207,
+        "gpoints_per_s": 3.344110291076554,
+        "gbytes_per_s": 214.02305862889946
+      },
+      "jax": {
+        "name": "laplacian_3d_7pt",
+        "framework": "JAX",
+        "time_ms": 0.048817601054906845,
+        "gpoints_per_s": 5.369866489448294,
+        "gbytes_per_s": 343.67145532469084
+      },
+      "handwritten": {
+        "name": "laplacian_3d_7pt",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.006742720007896424,
+        "gpoints_per_s": 38.878078830650274,
+        "gbytes_per_s": 2488.1970451616176
+      },
+      "cuda": {
+        "name": "laplacian_3d_7pt",
+        "framework": "CUDA-naive",
+        "time_ms": 0.006208000183105469,
+        "gpoints_per_s": 42.22680287822833,
+        "gbytes_per_s": 2702.515384206613
+      },
+      "cuda_smem": {
+        "name": "laplacian_3d_7pt",
+        "framework": "CUDA-smem",
+        "time_ms": 0.0062070399522781376,
+        "gpoints_per_s": 42.23333537651657,
+        "gbytes_per_s": 2702.9334640970606
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.006226239800453186,
+          "gpoints_per_s": 42.10310049107319,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.050729550421237946,
+          "gpoints_per_s": 5.167481237725562,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.13387823477387428,
+          "gpoints_per_s": 1.9580778043777747,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_3d_7pt",
+      "ndim": 3,
+      "domain": [
+        128,
+        128,
+        128
+      ],
+      "npoints": 2097152,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.022947840690612793,
+        "gpoints_per_s": 91.38777056517895,
+        "gbytes_per_s": 5848.817316171453,
+        "tile_sizes": [
+          4,
+          4,
+          8
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_3d_7pt",
+        "framework": "CuPy",
+        "time_ms": 0.08615391731262206,
+        "gpoints_per_s": 24.34192275192987,
+        "gbytes_per_s": 1557.8830561235118
+      },
+      "jax": {
+        "name": "laplacian_3d_7pt",
+        "framework": "JAX",
+        "time_ms": 0.04958920180797577,
+        "gpoints_per_s": 42.29049719575645,
+        "gbytes_per_s": 2706.591820528413
+      },
+      "handwritten": {
+        "name": "laplacian_3d_7pt",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.02468287944793701,
+        "gpoints_per_s": 84.96383108070802,
+        "gbytes_per_s": 5437.685189165313
+      },
+      "cuda": {
+        "name": "laplacian_3d_7pt",
+        "framework": "CUDA-naive",
+        "time_ms": 0.030870399475097655,
+        "gpoints_per_s": 67.9340739238479,
+        "gbytes_per_s": 4347.780731126266
+      },
+      "cuda_smem": {
+        "name": "laplacian_3d_7pt",
+        "framework": "CUDA-smem",
+        "time_ms": 0.03083647966384888,
+        "gpoints_per_s": 68.00880070816237,
+        "gbytes_per_s": 4352.563245322392
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.022947840690612793,
+          "gpoints_per_s": 91.38777056517895,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.059012603014707565,
+          "gpoints_per_s": 35.537358002617374,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.13372479006648064,
+          "gpoints_per_s": 15.682597063397226,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "laplacian_3d_7pt",
+      "ndim": 3,
+      "domain": [
+        256,
+        256,
+        256
+      ],
+      "npoints": 16777216,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.26637887954711914,
+        "gpoints_per_s": 62.98253085426135,
+        "gbytes_per_s": 4030.8819746727263,
+        "tile_sizes": [
+          4,
+          8,
+          32
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "laplacian_3d_7pt",
+        "framework": "CuPy",
+        "time_ms": 1.687546844482422,
+        "gpoints_per_s": 9.941777945219439,
+        "gbytes_per_s": 636.2737884940441
+      },
+      "jax": {
+        "name": "laplacian_3d_7pt",
+        "framework": "JAX",
+        "time_ms": 0.10424712672829628,
+        "gpoints_per_s": 160.9369632194005,
+        "gbytes_per_s": 10299.965646041632
+      },
+      "handwritten": {
+        "name": "laplacian_3d_7pt",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.35985279083251953,
+        "gpoints_per_s": 46.622442363684065,
+        "gbytes_per_s": 2983.83631127578
+      },
+      "cuda": {
+        "name": "laplacian_3d_7pt",
+        "framework": "CUDA-naive",
+        "time_ms": 0.5397113418579101,
+        "gpoints_per_s": 31.085535357189023,
+        "gbytes_per_s": 1989.4742628600975
+      },
+      "cuda_smem": {
+        "name": "laplacian_3d_7pt",
+        "framework": "CUDA-smem",
+        "time_ms": 0.5398726272583008,
+        "gpoints_per_s": 31.07624864257654,
+        "gbytes_per_s": 1988.8799131248986
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.26637887954711914,
+          "gpoints_per_s": 62.98253085426135,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.14319062232971191,
+          "gpoints_per_s": 117.16700246869968,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.1673533208668232,
+          "gpoints_per_s": 100.2502723764353,
+          "num_gpus": 4
+        }
+      ]
+    }
+  ]
+}

@@ -8,7 +8,9 @@ dist/
 build/
 *.egg-info/
 
-# Benchmark results and generated figures
-benchmarks/results/*.json
-paper/figures/*.pdf
-paper/figures/*.png
+# Benchmark intermediates: anything with a _fix / _tmp / _wip suffix
+# is a one-off comparison run. The canonical results.json and the
+# paper/figures/ directory are checked in.
+benchmarks/results/*_fix.json
+benchmarks/results/*_tmp.json
+benchmarks/results/*_wip.json
