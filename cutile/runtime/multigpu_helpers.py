@@ -37,6 +37,9 @@ import cupy as cp
 # Keyed independently of the stencil so multiple compiled stencils with
 # the same multi-GPU shape share streams and events.
 _HALO_STATE_CACHE: dict = {}
+# Externally-pinned states (e.g. CUDA Graph capture) opt out of the
+# per-call current-stream refresh in get_halo_state.
+_HALO_PRIME_CACHE: dict = {}
 
 
 def decompose_domain(u, num_gpus: int, split_axis: int, halo_width: int):
@@ -52,13 +55,19 @@ def decompose_domain(u, num_gpus: int, split_axis: int, halo_width: int):
     base_chunk = interior_total // num_gpus
     remainder = interior_total % num_gpus
 
+    # cudaDeviceEnablePeerAccess(peer) enables access *from the current
+    # device* to ``peer``. Without the ``with cp.cuda.Device(i):`` wrap
+    # the call only enabled access from whatever device happened to be
+    # current (usually GPU 0), so non-zero pair P2P silently fell back
+    # to host-staged copies.
     for i in range(num_gpus):
-        for j in range(num_gpus):
-            if i != j:
-                try:
-                    cp.cuda.runtime.deviceEnablePeerAccess(j)
-                except cp.cuda.runtime.CUDARuntimeError:
-                    pass  # already enabled or not supported on this pair
+        with cp.cuda.Device(i):
+            for j in range(num_gpus):
+                if i != j:
+                    try:
+                        cp.cuda.runtime.deviceEnablePeerAccess(j)
+                    except cp.cuda.runtime.CUDARuntimeError:
+                        pass  # already enabled or not supported on this pair
 
     partitions = []
     offset = 0
@@ -95,20 +104,38 @@ def gather_results(u_out, partitions, num_gpus: int, split_axis: int,
 
 
 def get_halo_state(num_gpus: int, halo_width: int):
-    """Lazy per-shape cache of (streams, ev_right, ev_left).
+    """Per-(num_gpus, halo_width) cache of (streams, ev_right, ev_left).
 
-    - ``streams[g]``: GPU *g*'s default (current) stream
-    - ``ev_right[i]``: event recorded on *i* after *i*->(i+1) halo send
-    - ``ev_left[j]``: event recorded on *j* after *j*->(j-1) halo send
+    - ``streams[g]``: GPU *g*'s currently-active stream, captured fresh
+      on each call (NOT cached) so callers that push a non-default
+      stream get correct ordering.
+    - ``ev_right[i]``: event on device *i*, recorded after the
+      *i*->(i+1) halo send, awaited by neighbour *i+1*'s next kernel.
+    - ``ev_left[j]``: event on device *j*, recorded after *j*->(j-1)
+      halo send, awaited by neighbour *j-1*'s next kernel.
 
-    Cached so subsequent ``step`` calls on the same shape are
-    allocation-free. Pre-prime via :func:`prime_halo_state` to inject
-    custom streams (e.g. for CUDA Graph capture).
+    The events are persistent (created once, reused) since CUDA event
+    handles are stream-agnostic. The streams list is rebuilt every
+    call from ``cp.cuda.get_current_stream()`` per device, so callers
+    may freely push a different current stream between steps without
+    invalidating any cached state. Pre-prime via :func:`prime_halo_state`
+    to inject specific streams (e.g. for CUDA Graph capture).
     """
     key = (num_gpus, halo_width)
+    primed = _HALO_PRIME_CACHE.get(key)
+    if primed is not None:
+        # Externally-pinned: return as-is (CUDA Graph capture etc).
+        return primed
     state = _HALO_STATE_CACHE.get(key)
     if state is not None:
-        return state
+        # Refresh streams from the *current* current-stream per device;
+        # reuse persistent events.
+        _, ev_right, ev_left = state
+        streams = []
+        for gid in range(num_gpus):
+            with cp.cuda.Device(gid):
+                streams.append(cp.cuda.get_current_stream())
+        return (streams, ev_right, ev_left)
     streams = []
     for gid in range(num_gpus):
         with cp.cuda.Device(gid):
@@ -127,37 +154,44 @@ def get_halo_state(num_gpus: int, halo_width: int):
 
 def prime_halo_state(num_gpus: int, halo_width: int,
                      streams: list, ev_right: dict, ev_left: dict) -> None:
-    """Override the cached halo-state with externally-built streams.
+    """Pin externally-built streams + events into the prime cache.
 
     Used by :mod:`cutile.runtime.graph_helpers` to inject capture-aware
-    streams into the multi-GPU step path. The next call to
-    :func:`get_halo_state` for ``(num_gpus, halo_width)`` returns the
-    primed values instead of constructing fresh defaults.
+    streams into the multi-GPU step path. While a prime is set,
+    :func:`get_halo_state` returns it verbatim (no current-stream
+    refresh); clear with :func:`reset_halo_state`.
     """
-    _HALO_STATE_CACHE[(num_gpus, halo_width)] = (streams, ev_right, ev_left)
+    _HALO_PRIME_CACHE[(num_gpus, halo_width)] = (streams, ev_right, ev_left)
 
 
 def reset_halo_state(num_gpus: int | None = None,
                      halo_width: int | None = None) -> None:
     """Clear the halo-state cache (whole or one entry).
 
+    Clears both the regular cache and any externally-primed entry.
     Useful between capture experiments or when the lifetime of an
-    underlying stream/event handle ends (e.g. captured streams are
-    destroyed at end of a benchmark).
+    underlying stream/event handle ends.
     """
     if num_gpus is None or halo_width is None:
         _HALO_STATE_CACHE.clear()
+        _HALO_PRIME_CACHE.clear()
     else:
         _HALO_STATE_CACHE.pop((num_gpus, halo_width), None)
+        _HALO_PRIME_CACHE.pop((num_gpus, halo_width), None)
 
 
 def halo_send_pair(parts, i: int, j: int, halo_width: int, axis: int,
                    streams, ev_right, ev_left) -> None:
     """Async P2P halo exchange between adjacent GPUs *i* and *j=i+1*.
 
-    Records cross-device events on each sender so the next iteration's
-    kernel on the receiving side can ``stream.wait_event`` on them
-    instead of a host-side synchronize.
+    Records cross-device events so the next iteration's kernel on the
+    receiving side can ``stream.wait_event`` on them instead of a
+    host-side synchronize. Each event is recorded on the stream that
+    actually performs the write — for the async P2P path that is the
+    sender's stream; for the synchronous fallback the write completes
+    before the function returns, so the event needs to capture the
+    receiver's view (record on the receiver's stream after a sync
+    barrier).
     """
     ndim = parts[0].ndim
     # i -> j (right halo of i)
@@ -167,16 +201,26 @@ def halo_send_pair(parts, i: int, j: int, halo_width: int, axis: int,
     sl_dst[axis] = slice(0, halo_width)
     sv = parts[i][tuple(sl_src)]
     dv = parts[j][tuple(sl_dst)]
-    with cp.cuda.Device(i):
-        if sv.flags.c_contiguous and dv.flags.c_contiguous:
+    if sv.flags.c_contiguous and dv.flags.c_contiguous:
+        with cp.cuda.Device(i):
             cp.cuda.runtime.memcpyPeerAsync(
                 dv.data.ptr, j, sv.data.ptr, i, sv.nbytes, streams[i].ptr,
             )
-        else:
+            ev_right[i].record(streams[i])
+    else:
+        # Synchronous fallback. CUDA requires events to be recorded on
+        # streams of the device they were created on (``ev_right[i]``
+        # lives on device i). The cross-device write happens on device
+        # j, so we host-sync device j first, then record on streams[i].
+        # The receiver's ``wait_event(ev_right[i])`` is now ordered
+        # after the data arrival via host->device i causality.
+        with cp.cuda.Device(i):
             buf = cp.ascontiguousarray(sv)
-            with cp.cuda.Device(j):
-                parts[j][tuple(sl_dst)] = buf.copy()
-        ev_right[i].record(streams[i])
+        with cp.cuda.Device(j):
+            parts[j][tuple(sl_dst)] = buf.copy()
+            cp.cuda.Device(j).synchronize()
+        with cp.cuda.Device(i):
+            ev_right[i].record(streams[i])
     # j -> i (left halo of j)
     sl_src2 = [slice(None)] * ndim
     sl_src2[axis] = slice(halo_width, 2 * halo_width)
@@ -184,16 +228,20 @@ def halo_send_pair(parts, i: int, j: int, halo_width: int, axis: int,
     sl_dst2[axis] = slice(-halo_width, None)
     sv2 = parts[j][tuple(sl_src2)]
     dv2 = parts[i][tuple(sl_dst2)]
-    with cp.cuda.Device(j):
-        if sv2.flags.c_contiguous and dv2.flags.c_contiguous:
+    if sv2.flags.c_contiguous and dv2.flags.c_contiguous:
+        with cp.cuda.Device(j):
             cp.cuda.runtime.memcpyPeerAsync(
                 dv2.data.ptr, i, sv2.data.ptr, j, sv2.nbytes, streams[j].ptr,
             )
-        else:
+            ev_left[j].record(streams[j])
+    else:
+        with cp.cuda.Device(j):
             buf2 = cp.ascontiguousarray(sv2)
-            with cp.cuda.Device(i):
-                parts[i][tuple(sl_dst2)] = buf2.copy()
-        ev_left[j].record(streams[j])
+        with cp.cuda.Device(i):
+            parts[i][tuple(sl_dst2)] = buf2.copy()
+            cp.cuda.Device(i).synchronize()
+        with cp.cuda.Device(j):
+            ev_left[j].record(streams[j])
 
 
 ## ----------------------------------------------------------------- ##
@@ -232,13 +280,16 @@ def cartesian_decompose(u, topology: tuple[int, ...],
 
     num_gpus = math.prod(topo)
 
+    # See ``decompose_domain``: peer access enable must run from the
+    # accessing device, not from whatever device happens to be current.
     for i in range(num_gpus):
-        for j in range(num_gpus):
-            if i != j:
-                try:
-                    cp.cuda.runtime.deviceEnablePeerAccess(j)
-                except cp.cuda.runtime.CUDARuntimeError:
-                    pass
+        with cp.cuda.Device(i):
+            for j in range(num_gpus):
+                if i != j:
+                    try:
+                        cp.cuda.runtime.deviceEnablePeerAccess(j)
+                    except cp.cuda.runtime.CUDARuntimeError:
+                        pass
 
     # Per-axis chunking (equal split with remainders going to low ranks)
     interior_per_axis = [u.shape[d] - 2 * halo_widths[d] for d in range(ndim)]
@@ -328,12 +379,25 @@ def _cart_neighbour(coord: tuple[int, ...], topology: tuple[int, ...],
 
 def get_cartesian_halo_state(topology: tuple[int, ...],
                              halo_widths: tuple[int, ...]):
-    """Per-(topology, halo) cache of (streams, events_by_(rank, axis, side))."""
+    """Per-(topology, halo) cache of (streams, events_by_(rank, axis, side)).
+
+    Streams are refreshed from ``cp.cuda.get_current_stream()`` per
+    device on every call; events are persistent. Mirrors the 1D
+    ``get_halo_state`` semantics so callers can switch the active
+    stream between steps without invalidating cached state.
+    """
     import math
     key = (tuple(topology), tuple(halo_widths))
     state = _CART_HALO_STATE_CACHE.get(key)
     if state is not None:
-        return state
+        # Refresh streams; reuse persistent events + coords.
+        _, events, coords = state
+        num_gpus = math.prod(topology)
+        streams = []
+        for gid in range(num_gpus):
+            with cp.cuda.Device(gid):
+                streams.append(cp.cuda.get_current_stream())
+        return (streams, events, coords)
     num_gpus = math.prod(topology)
     streams = []
     for gid in range(num_gpus):
