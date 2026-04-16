@@ -65,11 +65,6 @@ def _save_cache(key: str, result: AutotuneResult) -> None:
 # Candidate generation
 # ------------------------------------------------------------------ #
 
-_TILE_CANDIDATES_1D = [32, 64, 128, 256, 512]
-_TILE_CANDIDATES_2D = [8, 16, 32, 64, 128]
-_TILE_CANDIDATES_3D = [4, 8, 16, 32]
-
-
 def _generate_candidates(
     ndim: int,
     halo: tuple[int, ...],
@@ -77,40 +72,23 @@ def _generate_candidates(
     dtype_bytes: int = 8,
     max_temporal: int = 8,
 ) -> list[tuple[tuple[int, ...], int]]:
-    """Generate (tile_sizes, temporal_steps) candidates that fit in shared memory."""
+    """Generate (tile_sizes, temporal_steps) candidates that fit smem.
 
-    if ndim == 1:
-        widths = _TILE_CANDIDATES_1D
-    elif ndim == 2:
-        widths = _TILE_CANDIDATES_2D
-    else:
-        widths = _TILE_CANDIDATES_3D
+    Thin wrapper around the shared candidate-generation logic in
+    :mod:`cutile.passes.analysis.tile_selection` so the autotuner and
+    the static :class:`TilingPass` cannot drift apart on the smem
+    model. ``num_loads = 2*ndim + 1`` is a conservative upper bound
+    used pre-IR-construction.
+    """
+    from cutile.passes.analysis.tile_selection import generate_candidates
 
-    # Count loads: 2*ndim neighbors + possibly center = conservative upper bound
-    num_loads = 2 * ndim + 1  # overestimate is safe
-
-    candidates: list[tuple[tuple[int, ...], int]] = []
-
-    # T>1 (temporal blocking): a single halo'd tile per buffer, double-buffered.
-    # Matches TemporalBlockingPass smem model.
-    for combo in iterproduct(widths, repeat=ndim):
-        for T in range(max_temporal, 1, -1):
-            expanded = tuple(c + 2 * T * h for c, h in zip(combo, halo))
-            smem = 2 * math.prod(expanded) * dtype_bytes
-            if smem > shared_mem:
-                continue
-            candidates.append((combo, T))
-            break  # best T for this tile combo
-
-    # T=1 (no temporal blocking): each ct.load brings in a (tile,) shaped smem
-    # tile — no halo expansion. Total smem = (num_loads + 1_store) * prod(tile).
-    for combo in iterproduct(widths, repeat=ndim):
-        prod_tile = math.prod(combo)
-        smem = (num_loads + 1) * prod_tile * dtype_bytes
-        if smem <= shared_mem and (combo, 1) not in candidates:
-            candidates.append((combo, 1))
-
-    return candidates
+    return generate_candidates(
+        ndim, halo,
+        num_loads=2 * ndim + 1,
+        shared_mem_bytes=shared_mem,
+        dtype_bytes=dtype_bytes,
+        max_temporal=max_temporal,
+    )
 
 
 # ------------------------------------------------------------------ #

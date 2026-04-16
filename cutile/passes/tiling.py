@@ -1,37 +1,31 @@
 """
-Tiling pass: select optimal tile sizes for shared-memory stencil execution.
+Tiling pass: select tile sizes for shared-memory stencil execution.
 
-For each ``stencil.ApplyOp`` that has ``halo_widths`` (set by
-``AnalysisPass``), this pass evaluates candidate tile sizes and picks the
-configuration with minimum halo overhead that fits within the shared-memory
-budget.  It attaches ``tile_sizes`` (``ArrayAttr[IntAttr]``) on the op.
+Thin wrapper around :class:`cutile.passes.analysis.tile_selection.OverheadHeuristic`.
+The heuristic + smem model + fallback are unified so the empirical
+autotuner and the static pass cannot drift apart.
 """
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass
+import warnings
+from dataclasses import dataclass, field
 from typing import ClassVar
 
 from xdsl.context import Context
-from xdsl.dialects.builtin import ArrayAttr, FileLineColLoc, IntAttr, ModuleOp, StringAttr
-from xdsl.dialects.stencil import ApplyOp
+from xdsl.dialects.builtin import ArrayAttr, FileLineColLoc, IntAttr, ModuleOp
+from xdsl.dialects.stencil import AccessOp, ApplyOp
 from xdsl.passes import ModulePass
+
+from cutile.passes.analysis.tile_selection import (
+    OverheadHeuristic,
+    fallback_tile,
+)
 
 
 @dataclass(frozen=True)
 class TilingPass(ModulePass):
-    """Select tile sizes that minimise halo overhead within a shared-memory budget.
-
-    Parameters
-    ----------
-    shared_mem_bytes : int
-        Per-SM shared memory budget in bytes.
-    dtype_bytes : int
-        Size of a single element in bytes (8 for float64, 4 for float32).
-    candidate_sizes : tuple[int, ...]
-        Power-of-2 candidate tile widths to evaluate (same for all dims).
-    """
+    """Attach ``tile_sizes`` to each ``stencil.ApplyOp``."""
 
     name: ClassVar[str] = "stencil-tiling"
 
@@ -40,77 +34,44 @@ class TilingPass(ModulePass):
     candidate_sizes: tuple[int, ...] = (4, 8, 16, 32, 64, 128, 256)
 
     def apply(self, ctx: Context, op: ModuleOp) -> None:
+        selector = OverheadHeuristic(
+            shared_mem_bytes=self.shared_mem_bytes,
+            dtype_bytes=self.dtype_bytes,
+            candidate_widths=self.candidate_sizes,
+        )
         for child in op.walk():
             if isinstance(child, ApplyOp):
-                self._tile_apply(child)
+                self._tile_apply(child, selector)
 
-    # ------------------------------------------------------------------
-
-    def _tile_apply(self, apply_op: ApplyOp) -> None:
-        from itertools import product as iterproduct
-        from xdsl.dialects.stencil import AccessOp
-
-        # Must have halo_widths (set by AnalysisPass)
+    def _tile_apply(self, apply_op: ApplyOp,
+                    selector: OverheadHeuristic) -> None:
         halo_attr = apply_op.attributes.get("halo_widths")
         if halo_attr is None:
             return
 
-        halo: list[int] = [a.data for a in halo_attr]
-        ndim: int = len(halo)
+        halo: tuple[int, ...] = tuple(a.data for a in halo_attr)
+        ndim = len(halo)
 
-        # Count actual number of unique loads (stencil accesses) + 1 store
-        num_loads = 0
-        for child_op in apply_op.region.block.ops:
-            if isinstance(child_op, AccessOp):
-                num_loads += 1
-        num_loads = max(num_loads, 1)
-        num_tiles = num_loads + 1  # loads + 1 store
+        num_loads = max(
+            sum(1 for c in apply_op.region.block.ops
+                if isinstance(c, AccessOp)),
+            1,
+        )
 
-        # Generate candidates: all combinations of candidate sizes per dim
-        # For 3D, also include non-square tiles (e.g., 4x4x32, 8x8x16)
-        candidates: list[tuple[int, ...]] = []
-        for combo in iterproduct(self.candidate_sizes, repeat=ndim):
-            candidates.append(combo)
-
-        best_tile: tuple[int, ...] | None = None
-        best_overhead: float = float("inf")
-
-        for tile in candidates:
-            # Each ct.load brings a (tile,) shaped tile into shared memory
-            # (halo is realised by shifting source slices, not by expanding
-            # the smem tile). Same for the store. So smem = num_tiles *
-            # prod(tile). The halo expansion only matters for bandwidth
-            # accounting (redundant loads at CTA boundaries).
-            prod_tile = math.prod(tile)
-            smem_usage = num_tiles * prod_tile * self.dtype_bytes
-
-            if smem_usage > self.shared_mem_bytes:
-                continue
-
-            # Halo overhead: fraction of the loaded data that is redundant
-            # halo (lower = better bandwidth utilisation).
-            expanded = tuple(t + 2 * h for t, h in zip(tile, halo))
-            overhead = 1.0 - prod_tile / math.prod(expanded)
-            if overhead < best_overhead:
-                best_overhead = overhead
-                best_tile = tile
-
-        # Fallback per ndim
-        if best_tile is None:
-            fallback = {1: (32,), 2: (16, 16), 3: (8, 8, 8)}
-            best_tile = fallback.get(ndim, (8,) * ndim)
+        chosen = selector.select(ndim, halo, num_loads)
+        if chosen is None:
+            chosen = fallback_tile(ndim)
             loc = getattr(apply_op, "location", None)
             loc_prefix = ""
             if isinstance(loc, FileLineColLoc):
                 loc_prefix = f"{loc.filename.data}:{loc.line.data} -- "
-            import warnings
             warnings.warn(
                 f"{loc_prefix}stencil-tiling: no candidate tile size fits in "
-                f"shared memory ({self.shared_mem_bytes} B); "
-                f"falling back to {best_tile}",
+                f"shared memory ({selector.shared_mem_bytes} B); "
+                f"falling back to {chosen}",
                 stacklevel=2,
             )
 
         apply_op.attributes["tile_sizes"] = ArrayAttr(
-            [IntAttr(s) for s in best_tile]
+            [IntAttr(s) for s in chosen]
         )
