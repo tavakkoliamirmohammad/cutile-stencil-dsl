@@ -160,8 +160,15 @@ def prime_halo_state(num_gpus: int, halo_width: int,
     streams into the multi-GPU step path. While a prime is set,
     :func:`get_halo_state` returns it verbatim (no current-stream
     refresh); clear with :func:`reset_halo_state`.
+
+    Also evicts any regular-cache entry for the same key so that, after
+    a future ``reset_halo_state`` clears the prime, ``get_halo_state``
+    cold-creates a fresh state instead of reverting to stale events
+    that the prime had supplanted.
     """
-    _HALO_PRIME_CACHE[(num_gpus, halo_width)] = (streams, ev_right, ev_left)
+    key = (num_gpus, halo_width)
+    _HALO_STATE_CACHE.pop(key, None)
+    _HALO_PRIME_CACHE[key] = (streams, ev_right, ev_left)
 
 
 def reset_halo_state(num_gpus: int | None = None,
@@ -454,17 +461,25 @@ def cartesian_halo_send_axis(parts: list, coords: list, topology: tuple[int, ...
         sl_dst[axis] = slice(0, h)
         sv = parts[rank][tuple(sl_src)]
         dv = parts[right_rank][tuple(sl_dst)]
-        with cp.cuda.Device(rank):
-            if sv.flags.c_contiguous and dv.flags.c_contiguous:
+        if sv.flags.c_contiguous and dv.flags.c_contiguous:
+            with cp.cuda.Device(rank):
                 cp.cuda.runtime.memcpyPeerAsync(
                     dv.data.ptr, right_rank, sv.data.ptr, rank,
                     sv.nbytes, streams[rank].ptr,
                 )
-            else:
+                events[(rank, axis, "high")].record(streams[rank])
+        else:
+            # Synchronous fallback. Mirror ``halo_send_pair``: host-sync
+            # the destination device after the slice-assignment write,
+            # then record the event on the sender's stream (the event
+            # belongs to ``rank``).
+            with cp.cuda.Device(rank):
                 buf = cp.ascontiguousarray(sv)
-                with cp.cuda.Device(right_rank):
-                    parts[right_rank][tuple(sl_dst)] = buf.copy()
-            events[(rank, axis, "high")].record(streams[rank])
+            with cp.cuda.Device(right_rank):
+                parts[right_rank][tuple(sl_dst)] = buf.copy()
+                cp.cuda.Device(right_rank).synchronize()
+            with cp.cuda.Device(rank):
+                events[(rank, axis, "high")].record(streams[rank])
         # right_rank.low boundary -> rank.high halo
         sl_src2 = [slice(None)] * ndim
         sl_src2[axis] = slice(h, 2 * h)
@@ -472,17 +487,21 @@ def cartesian_halo_send_axis(parts: list, coords: list, topology: tuple[int, ...
         sl_dst2[axis] = slice(-h, None)
         sv2 = parts[right_rank][tuple(sl_src2)]
         dv2 = parts[rank][tuple(sl_dst2)]
-        with cp.cuda.Device(right_rank):
-            if sv2.flags.c_contiguous and dv2.flags.c_contiguous:
+        if sv2.flags.c_contiguous and dv2.flags.c_contiguous:
+            with cp.cuda.Device(right_rank):
                 cp.cuda.runtime.memcpyPeerAsync(
                     dv2.data.ptr, rank, sv2.data.ptr, right_rank,
                     sv2.nbytes, streams[right_rank].ptr,
                 )
-            else:
+                events[(right_rank, axis, "low")].record(streams[right_rank])
+        else:
+            with cp.cuda.Device(right_rank):
                 buf2 = cp.ascontiguousarray(sv2)
-                with cp.cuda.Device(rank):
-                    parts[rank][tuple(sl_dst2)] = buf2.copy()
-            events[(right_rank, axis, "low")].record(streams[right_rank])
+            with cp.cuda.Device(rank):
+                parts[rank][tuple(sl_dst2)] = buf2.copy()
+                cp.cuda.Device(rank).synchronize()
+            with cp.cuda.Device(right_rank):
+                events[(right_rank, axis, "low")].record(streams[right_rank])
 
 
 def reset_cartesian_halo_state(topology: tuple[int, ...] | None = None,

@@ -403,6 +403,51 @@ class TestFeatureComposition:
             "cudaErrorStreamCaptureUnsupported on memcpyPeerAsync"
         )
 
+    def test_capture_loop_rejects_multigpu_launcher(self):
+        # ``capture_loop`` is single-GPU only; multi-GPU launchers
+        # push devices and would trip CUDA's stream-capture rules.
+        # The guard catches the misuse early with a clear message.
+        from cutile.runtime.graph_helpers import capture_loop
+
+        def step_multigpu_dummy(a, b):
+            pass
+        u = cp.zeros((4, 4), dtype=cp.float64)
+        with pytest.raises(ValueError, match="single-GPU only"):
+            capture_loop(step_multigpu_dummy, u, u, n_iters=2)
+
+    def test_prime_halo_state_evicts_regular_cache(self):
+        # If ``prime_halo_state`` is called after the regular cache is
+        # warm, the next non-primed ``get_halo_state`` must NOT return
+        # the stale events the prime supplanted. Verified by clearing
+        # the prime and checking the regular cache cold-creates fresh.
+        from cutile.runtime.multigpu_helpers import (
+            get_halo_state, prime_halo_state, reset_halo_state,
+            _HALO_STATE_CACHE, _HALO_PRIME_CACHE,
+        )
+        if cp.cuda.runtime.getDeviceCount() < 2:
+            pytest.skip("Need 2+ GPUs")
+        reset_halo_state()
+        # Warm the regular cache.
+        s_a, evr_a, evl_a = get_halo_state(2, 1)
+        assert (2, 1) in _HALO_STATE_CACHE
+        # Prime with fresh handles.
+        with cp.cuda.Device(0):
+            ev_r_new = {0: cp.cuda.Event(disable_timing=True)}
+        with cp.cuda.Device(1):
+            ev_l_new = {1: cp.cuda.Event(disable_timing=True)}
+        prime_halo_state(2, 1, s_a, ev_r_new, ev_l_new)
+        # Regular cache must have been evicted.
+        assert (2, 1) not in _HALO_STATE_CACHE
+        # While primed, get returns the prime.
+        s_p, evr_p, evl_p = get_halo_state(2, 1)
+        assert evr_p is ev_r_new
+        # Clear the prime — the next get must re-create, not revert.
+        reset_halo_state(2, 1)
+        s_b, evr_b, evl_b = get_halo_state(2, 1)
+        assert evr_b is not evr_a, (
+            "regular cache returned the pre-prime event handles "
+            "after the prime was cleared")
+
 
 @multigpu_required
 class TestCartesianTopologyConvergence:

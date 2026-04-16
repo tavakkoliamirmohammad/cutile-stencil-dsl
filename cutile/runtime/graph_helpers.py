@@ -76,7 +76,24 @@ def capture_loop(
 
     The capture uses a non-default non-blocking stream so it does not
     interfere with the legacy default stream.
+
+    *Single-GPU only.* ``launch_fn`` must record all of its work on
+    the active stream of one device. Generated multi-GPU launchers
+    (``step_multigpu_*`` / ``step_cartesian_*``) push different
+    devices via ``with cp.cuda.Device(...)`` and would trip CUDA's
+    cross-device capture restriction; multi-GPU graph capture is also
+    blocked by ``cudaMemcpyPeerAsync`` not being permitted in a
+    capturing stream. See the module docstring.
     """
+    fn_name = getattr(launch_fn, "__name__", "")
+    if "multigpu" in fn_name or "cartesian" in fn_name:
+        raise ValueError(
+            f"capture_loop is single-GPU only; {fn_name!r} pushes "
+            f"multiple devices and would violate stream capture "
+            f"semantics. Multi-GPU graph capture is not supported "
+            f"because cudaMemcpyPeerAsync is rejected on a capturing "
+            f"stream — see the module docstring."
+        )
     if stream is None:
         stream = cp.cuda.Stream(non_blocking=True)
     a, b = buf_in, buf_out
