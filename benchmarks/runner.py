@@ -211,16 +211,26 @@ def run_benchmarks(
                     else:
                         print(f"{bl}=ERR", end=" ")
 
-            # Multi-GPU scaling
+            # Multi-GPU scaling. ng=1 reuses the single-GPU result (the
+            # multi-GPU codegen path requires num_gpus>=2).
             if scaling_gpus and meta["ndim"] >= 2:
                 row["scaling"] = []
                 for ng in scaling_gpus:
-                    if ng <= gpu["n_gpus"]:
-                        try:
-                            sg = bench_cutile_multigpu(sname, domain, ng, warmup=20, iters=50)
-                            row["scaling"].append(sg)
-                        except Exception as e:
-                            row["scaling"].append({"num_gpus": ng, "error": str(e)})
+                    if ng > gpu["n_gpus"]:
+                        continue
+                    if ng == 1 and "cutile" in row and "gpoints_per_s" in row["cutile"]:
+                        row["scaling"].append({
+                            "framework": "cuTile-1GPU",
+                            "time_ms": row["cutile"]["time_ms"],
+                            "gpoints_per_s": row["cutile"]["gpoints_per_s"],
+                            "num_gpus": 1,
+                        })
+                        continue
+                    try:
+                        sg = bench_cutile_multigpu(sname, domain, ng, warmup=20, iters=50)
+                        row["scaling"].append(sg)
+                    except Exception as e:
+                        row["scaling"].append({"num_gpus": ng, "error": str(e)})
 
             print()
             all_results.append(row)
