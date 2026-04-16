@@ -167,6 +167,52 @@ def _validate_multigpu(stencil_fn, domain, num_gpus=2, atol=1e-10):
     assert maxdiff < atol, f"Multi-GPU max_diff={maxdiff:.2e}"
 
 
+def _validate_multigpu_iterated(stencil_fn, domain, num_gpus=2, n_steps=20,
+                                atol=1e-10):
+    """Run a multi-GPU stencil for N timesteps and compare to single-GPU.
+
+    Single-step ``launch_multigpu_X`` does not exercise the cross-iteration
+    halo dependencies introduced by the event-chained async halo exchange.
+    This iterated path runs ``setup -> step x N -> gather`` and also runs
+    the same N steps on a single-GPU reference, then compares interiors.
+    """
+    res = stencil_compile(stencil_fn, num_gpus=num_gpus, temporal_blocking=False)
+    mod = res.load_module()
+    setup = getattr(mod, f"setup_multigpu_{res.name}")
+    step = getattr(mod, f"step_multigpu_{res.name}")
+    gather = getattr(mod, f"gather_multigpu_{res.name}")
+
+    res1 = stencil_compile(stencil_fn, num_gpus=1, temporal_blocking=False)
+    launch_ref = getattr(res1.load_module(), f"launch_{res1.name}")
+
+    halo = res.halo_widths
+    shape = tuple(d + 2 * h for d, h in zip(domain, halo))
+    np.random.seed(123)
+    u_np = np.random.randn(*shape).astype(np.float64)
+
+    # Multi-GPU iterated
+    p_in, p_out = setup(cp.asarray(u_np), num_gpus=num_gpus)
+    for _ in range(n_steps):
+        step(p_in, p_out, num_gpus=num_gpus)
+        p_in, p_out = p_out, p_in
+    out_mg = cp.zeros(shape, dtype=cp.float64)
+    gather(out_mg, p_in, num_gpus=num_gpus)
+
+    # Single-GPU reference, same number of steps
+    ref_in = cp.asarray(u_np); ref_out = cp.zeros_like(ref_in)
+    for _ in range(n_steps):
+        launch_ref(ref_in, ref_out)
+        ref_in, ref_out = ref_out, ref_in
+    cp.cuda.Device(0).synchronize()
+
+    slices = _interior_slices(halo)
+    diff = float(cp.abs(out_mg[slices] - ref_in[slices]).max())
+    assert diff < atol, (
+        f"Multi-GPU iterated ({n_steps} steps, {num_gpus} GPUs) "
+        f"max_diff={diff:.2e}"
+    )
+
+
 def _validate_bricked(stencil_fn, domain, atol=1e-10):
     """Compile bricked stencil, run on GPU, compare to CPU reference."""
     result = stencil_compile(stencil_fn, layout="bricked", temporal_blocking=False)
@@ -287,6 +333,35 @@ class TestMultiGPUConvergence:
 
     def test_wave_2d(self):
         _validate_multigpu(_make_wave_2d(), (64, 64))
+
+
+@multigpu_required
+class TestMultiGPUIteratedConvergence:
+    """Stress-test multi-GPU correctness across many timesteps.
+
+    Exercises the event-chained async halo exchange end-to-end (a bug there
+    would leak only after the first step's halos race the next step's
+    kernel, which the single-step ``TestMultiGPUConvergence`` would miss).
+    """
+
+    def test_heat_2d_2gpu_20steps(self):
+        _validate_multigpu_iterated(_make_heat_2d(), (128, 128),
+                                    num_gpus=2, n_steps=20)
+
+    def test_heat_2d_4gpu_30steps(self):
+        if cp.cuda.runtime.getDeviceCount() < 4:
+            pytest.skip("Need 4+ GPUs")
+        _validate_multigpu_iterated(_make_heat_2d(), (256, 256),
+                                    num_gpus=4, n_steps=30)
+
+    def test_lap_3d_2gpu_15steps(self):
+        _validate_multigpu_iterated(_make_lap_3d(), (32, 32, 32),
+                                    num_gpus=2, n_steps=15)
+
+    def test_lap_4th_2gpu_25steps(self):
+        # halo=2 stresses the per-pair event chain harder than halo=1
+        _validate_multigpu_iterated(_make_lap_4th(), (256,),
+                                    num_gpus=2, n_steps=25)
 
 
 # ===================================================================
