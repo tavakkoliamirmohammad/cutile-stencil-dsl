@@ -98,7 +98,8 @@ def plot_throughput_vs_size(data: dict, outdir: Path):
 
         # Baselines
         for fw_key, display in [("cupy", "CuPy"), ("jax", "JAX"),
-                                 ("devito", "Devito"), ("handwritten", "Hand-cuTile")]:
+                                 ("devito", "Devito"), ("handwritten", "Hand-cuTile"),
+                                 ("cuda", "CUDA-naive"), ("cuda_smem", "CUDA-smem")]:
             fw_sizes, fw_gps = [], []
             for r in rows:
                 if fw_key in r and isinstance(r[fw_key], dict) and "error" not in r[fw_key]:
@@ -134,7 +135,7 @@ def plot_speedup_bars(data: dict, outdir: Path):
 
     stencil_names = list(largest.keys())
     baselines_present = [
-        bl for bl in ["cupy", "jax", "devito", "handwritten"]
+        bl for bl in ["cupy", "jax", "devito", "handwritten", "cuda", "cuda_smem"]
         if any(bl in largest[s] for s in stencil_names)
     ]
 
@@ -147,7 +148,8 @@ def plot_speedup_bars(data: dict, outdir: Path):
     width = 0.8 / len(baselines_present)
 
     display_map = {"cupy": "CuPy", "jax": "JAX",
-                   "devito": "Devito", "handwritten": "Hand-cuTile"}
+                   "devito": "Devito", "handwritten": "Hand-cuTile",
+                   "cuda": "CUDA-naive", "cuda_smem": "CUDA-smem"}
 
     for i, bl in enumerate(baselines_present):
         speedups = []

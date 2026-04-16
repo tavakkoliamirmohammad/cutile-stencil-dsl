@@ -141,6 +141,12 @@ def _run_baseline(baseline_name: str, stencil_name: str, shape: tuple[int, ...],
         elif baseline_name == "handwritten":
             from benchmarks.baselines.handwritten_cutile import bench_handwritten
             return bench_handwritten(stencil_name, shape, warmup, iters)
+        elif baseline_name == "cuda":
+            from benchmarks.baselines.cuda_rawkernel import bench_cuda
+            return bench_cuda(stencil_name, shape, variant="naive", warmup=warmup, iters=iters)
+        elif baseline_name == "cuda_smem":
+            from benchmarks.baselines.cuda_rawkernel import bench_cuda
+            return bench_cuda(stencil_name, shape, variant="smem", warmup=warmup, iters=iters)
     except Exception as e:
         return {"framework": baseline_name, "error": str(e)}
     return None
@@ -233,7 +239,7 @@ def main():
     parser = argparse.ArgumentParser(description="cuTile Stencil DSL benchmark suite")
     parser.add_argument("--all", action="store_true", help="Run all baselines")
     parser.add_argument("--baselines", nargs="+", default=[],
-                        choices=["cupy", "jax", "devito", "handwritten"],
+                        choices=["cupy", "jax", "devito", "handwritten", "cuda", "cuda_smem"],
                         help="Specific baselines to run")
     parser.add_argument("--stencils", nargs="+", default=None,
                         help="Specific stencils to benchmark")
@@ -248,7 +254,7 @@ def main():
 
     baselines = args.baselines
     if args.all:
-        baselines = ["cupy", "jax", "devito", "handwritten"]
+        baselines = ["cupy", "jax", "handwritten", "cuda", "cuda_smem"]
 
     results = run_benchmarks(
         stencils=args.stencils,

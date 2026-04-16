@@ -6,6 +6,8 @@ COLORS = {
     "JAX": "#009E73",
     "Devito": "#CC79A7",
     "Hand-cuTile": "#E69F00",
+    "CUDA-naive": "#56B4E9",
+    "CUDA-smem": "#F0E442",
 }
 
 MARKERS = {
@@ -14,6 +16,8 @@ MARKERS = {
     "JAX": "^",
     "Devito": "D",
     "Hand-cuTile": "*",
+    "CUDA-naive": "v",
+    "CUDA-smem": "P",
 }
 
 STENCIL_LABELS = {

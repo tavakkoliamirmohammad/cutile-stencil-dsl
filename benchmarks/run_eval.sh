@@ -16,8 +16,8 @@ echo ""
 # 1. Run benchmarks
 echo "[1/2] Running benchmarks..."
 python -m benchmarks.runner \
-    --baselines cupy jax \
-    --scaling 1 2 3 4 5 \
+    --baselines cupy jax handwritten cuda cuda_smem \
+    --scaling 1 2 4 \
     --warmup 30 --iters 100 \
     --output benchmarks/results/results.json \
     "$@"
