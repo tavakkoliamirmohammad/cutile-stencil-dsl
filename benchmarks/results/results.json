@@ -2,9 +2,9 @@
   "gpu": {
     "name": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
     "n_gpus": 4,
-    "peak_bw_gbs": 1470.751630357675
+    "peak_bw_gbs": 1469.9964378044626
   },
-  "timestamp": "2026-04-16 14:31:46",
+  "timestamp": "2026-04-16 15:09:01",
   "warmup": 30,
   "iters": 100,
   "baselines": [
@@ -24,27 +24,27 @@
       "npoints": 65536,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.005607360005378723,
-        "gpoints_per_s": 11.6874964220482,
-        "gbytes_per_s": 373.9998855055424,
+        "time_ms": 0.00572160005569458,
+        "gpoints_per_s": 11.454138590965211,
+        "gbytes_per_s": 366.53243491088676,
         "tile_sizes": [
-          32
+          128
         ],
         "temporal_steps": 1
       },
       "cupy": {
         "name": "heat_1d",
         "framework": "CuPy",
-        "time_ms": 0.04833920001983642,
-        "gpoints_per_s": 1.3557526804975406,
-        "gbytes_per_s": 43.3840857759213
+        "time_ms": 0.047139520645141604,
+        "gpoints_per_s": 1.390255970003259,
+        "gbytes_per_s": 44.48819104010429
       },
       "jax": {
         "name": "heat_1d",
         "framework": "JAX",
-        "time_ms": 0.033224932849407196,
-        "gpoints_per_s": 1.972494581013707,
-        "gbytes_per_s": 63.11982659243862
+        "time_ms": 0.03755185753107071,
+        "gpoints_per_s": 1.7452132679661714,
+        "gbytes_per_s": 55.846824574917484
       },
       "handwritten": {
         "framework": "handwritten",
@@ -53,16 +53,16 @@
       "cuda": {
         "name": "heat_1d",
         "framework": "CUDA-naive",
-        "time_ms": 0.003835200071334839,
-        "gpoints_per_s": 17.0880263822039,
-        "gbytes_per_s": 546.8168442305248
+        "time_ms": 0.003889920115470886,
+        "gpoints_per_s": 16.847646752269274,
+        "gbytes_per_s": 539.1246960726168
       },
       "cuda_smem": {
         "name": "heat_1d",
         "framework": "CUDA-smem",
-        "time_ms": 0.003855679929256439,
-        "gpoints_per_s": 16.997261495364448,
-        "gbytes_per_s": 543.9123678516623
+        "time_ms": 0.003809599876403809,
+        "gpoints_per_s": 17.202856500999456,
+        "gbytes_per_s": 550.4914080319826
       }
     },
     {
@@ -74,27 +74,27 @@
       "npoints": 262144,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.005797759890556336,
-        "gpoints_per_s": 45.214704463182834,
-        "gbytes_per_s": 1446.8705428218507,
+        "time_ms": 0.005608639717102051,
+        "gpoints_per_s": 46.7393188406561,
+        "gbytes_per_s": 1495.658202900995,
         "tile_sizes": [
-          64
+          512
         ],
         "temporal_steps": 1
       },
       "cupy": {
         "name": "heat_1d",
         "framework": "CuPy",
-        "time_ms": 0.047388157844543456,
-        "gpoints_per_s": 5.53184618106409,
-        "gbytes_per_s": 177.01907779405087
+        "time_ms": 0.04737343788146973,
+        "gpoints_per_s": 5.5335650466384765,
+        "gbytes_per_s": 177.07408149243125
       },
       "jax": {
         "name": "heat_1d",
         "framework": "JAX",
-        "time_ms": 0.040926504880189896,
-        "gpoints_per_s": 6.405237895769801,
-        "gbytes_per_s": 204.96761266463363
+        "time_ms": 0.03780145198106766,
+        "gpoints_per_s": 6.9347600756524175,
+        "gbytes_per_s": 221.91232242087736
       },
       "handwritten": {
         "framework": "handwritten",
@@ -103,16 +103,16 @@
       "cuda": {
         "name": "heat_1d",
         "framework": "CUDA-naive",
-        "time_ms": 0.003818880021572113,
-        "gpoints_per_s": 68.64420943292257,
-        "gbytes_per_s": 2196.614701853522
+        "time_ms": 0.003798080086708069,
+        "gpoints_per_s": 69.02013491432444,
+        "gbytes_per_s": 2208.644317258382
       },
       "cuda_smem": {
         "name": "heat_1d",
         "framework": "CUDA-smem",
-        "time_ms": 0.003905920088291168,
-        "gpoints_per_s": 67.11453231873145,
-        "gbytes_per_s": 2147.6650341994064
+        "time_ms": 0.0038604798913002016,
+        "gpoints_per_s": 67.90451119581157,
+        "gbytes_per_s": 2172.94435826597
       }
     },
     {
@@ -124,9 +124,9 @@
       "npoints": 1048576,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.008247680068016051,
-        "gpoints_per_s": 127.13587231230116,
-        "gbytes_per_s": 4068.347913993637,
+        "time_ms": 0.008140159845352173,
+        "gpoints_per_s": 128.81516087165176,
+        "gbytes_per_s": 4122.085147892856,
         "tile_sizes": [
           256
         ],
@@ -135,16 +135,16 @@
       "cupy": {
         "name": "heat_1d",
         "framework": "CuPy",
-        "time_ms": 0.04784895896911621,
-        "gpoints_per_s": 21.91429077227775,
-        "gbytes_per_s": 701.257304712888
+        "time_ms": 0.05052703857421875,
+        "gpoints_per_s": 20.752769795913434,
+        "gbytes_per_s": 664.0886334692299
       },
       "jax": {
         "name": "heat_1d",
         "framework": "JAX",
-        "time_ms": 0.04077143967151642,
-        "gpoints_per_s": 25.71839524059171,
-        "gbytes_per_s": 822.9886476989348
+        "time_ms": 0.05375128239393234,
+        "gpoints_per_s": 19.50792526800007,
+        "gbytes_per_s": 624.2536085760022
       },
       "handwritten": {
         "framework": "handwritten",
@@ -153,16 +153,16 @@
       "cuda": {
         "name": "heat_1d",
         "framework": "CUDA-naive",
-        "time_ms": 0.006267200112342834,
-        "gpoints_per_s": 167.31171515249676,
-        "gbytes_per_s": 5353.974884879896
+        "time_ms": 0.00632319986820221,
+        "gpoints_per_s": 165.82996297065134,
+        "gbytes_per_s": 5306.558815060843
       },
       "cuda_smem": {
         "name": "heat_1d",
         "framework": "CUDA-smem",
-        "time_ms": 0.00622111976146698,
-        "gpoints_per_s": 168.5510069255987,
-        "gbytes_per_s": 5393.632221619158
+        "time_ms": 0.006222720146179199,
+        "gpoints_per_s": 168.50765828571517,
+        "gbytes_per_s": 5392.245065142885
       }
     },
     {
@@ -174,9 +174,9 @@
       "npoints": 4194304,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.02057152032852173,
-        "gpoints_per_s": 203.88886834896383,
-        "gbytes_per_s": 6524.443787166842,
+        "time_ms": 0.020612800121307374,
+        "gpoints_per_s": 203.48055457367792,
+        "gbytes_per_s": 6511.3777463576935,
         "tile_sizes": [
           256
         ],
@@ -185,16 +185,16 @@
       "cupy": {
         "name": "heat_1d",
         "framework": "CuPy",
-        "time_ms": 0.1047760009765625,
-        "gpoints_per_s": 40.03115179914368,
-        "gbytes_per_s": 1280.9968575725977
+        "time_ms": 0.10479392051696777,
+        "gpoints_per_s": 40.02430655622696,
+        "gbytes_per_s": 1280.7778097992627
       },
       "jax": {
         "name": "heat_1d",
         "framework": "JAX",
-        "time_ms": 0.04118122160434723,
-        "gpoints_per_s": 101.84991694265901,
-        "gbytes_per_s": 3259.1973421650882
+        "time_ms": 0.056374818086624146,
+        "gpoints_per_s": 74.40031103169392,
+        "gbytes_per_s": 2380.8099530142053
       },
       "handwritten": {
         "framework": "handwritten",
@@ -203,16 +203,16 @@
       "cuda": {
         "name": "heat_1d",
         "framework": "CUDA-naive",
-        "time_ms": 0.020541439056396483,
-        "gpoints_per_s": 204.18744706661232,
-        "gbytes_per_s": 6533.998306131594
+        "time_ms": 0.020569920539855957,
+        "gpoints_per_s": 203.90472543990543,
+        "gbytes_per_s": 6524.951214076974
       },
       "cuda_smem": {
         "name": "heat_1d",
         "framework": "CUDA-smem",
-        "time_ms": 0.020539519786834718,
-        "gpoints_per_s": 204.2065269066532,
-        "gbytes_per_s": 6534.608861012903
+        "time_ms": 0.020549440383911134,
+        "gpoints_per_s": 204.10794268070995,
+        "gbytes_per_s": 6531.4541657827185
       }
     },
     {
@@ -224,27 +224,27 @@
       "npoints": 16777216,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.18170207977294922,
-        "gpoints_per_s": 92.33364869001184,
-        "gbytes_per_s": 2954.676758080379,
+        "time_ms": 0.18204351425170898,
+        "gpoints_per_s": 92.16047091247854,
+        "gbytes_per_s": 2949.1350691993134,
         "tile_sizes": [
-          64
+          128
         ],
         "temporal_steps": 1
       },
       "cupy": {
         "name": "heat_1d",
         "framework": "CuPy",
-        "time_ms": 1.0739910125732421,
-        "gpoints_per_s": 15.621374670354475,
-        "gbytes_per_s": 499.8839894513432
+        "time_ms": 1.0735884857177735,
+        "gpoints_per_s": 15.627231684385274,
+        "gbytes_per_s": 500.07141390032876
       },
       "jax": {
         "name": "heat_1d",
         "framework": "JAX",
-        "time_ms": 0.07067108526825905,
-        "gpoints_per_s": 237.39859005016945,
-        "gbytes_per_s": 7596.754881605422
+        "time_ms": 0.0822688452899456,
+        "gpoints_per_s": 203.9315848043197,
+        "gbytes_per_s": 6525.81071373823
       },
       "handwritten": {
         "framework": "handwritten",
@@ -253,16 +253,16 @@
       "cuda": {
         "name": "heat_1d",
         "framework": "CUDA-naive",
-        "time_ms": 0.18135423660278321,
-        "gpoints_per_s": 92.5107475528505,
-        "gbytes_per_s": 2960.343921691216
+        "time_ms": 0.1815545654296875,
+        "gpoints_per_s": 92.40867041978893,
+        "gbytes_per_s": 2957.077453433246
       },
       "cuda_smem": {
         "name": "heat_1d",
         "framework": "CUDA-smem",
-        "time_ms": 0.18180288314819337,
-        "gpoints_per_s": 92.28245289335896,
-        "gbytes_per_s": 2953.038492587487
+        "time_ms": 0.18167392730712892,
+        "gpoints_per_s": 92.34795685149291,
+        "gbytes_per_s": 2955.134619247773
       }
     },
     {
@@ -275,84 +275,9 @@
       "npoints": 65536,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.0057148802280426025,
-        "gpoints_per_s": 11.467606911238219,
-        "gbytes_per_s": 458.7042764495287,
-        "tile_sizes": [
-          32,
-          16
-        ],
-        "temporal_steps": 1
-      },
-      "cupy": {
-        "name": "heat_2d",
-        "framework": "CuPy",
-        "time_ms": 0.043783679008483886,
-        "gpoints_per_s": 1.4968134584419277,
-        "gbytes_per_s": 59.87253833767711
-      },
-      "jax": {
-        "name": "heat_2d",
-        "framework": "JAX",
-        "time_ms": 0.039989594370126724,
-        "gpoints_per_s": 1.6388263255042446,
-        "gbytes_per_s": 65.55305302016977
-      },
-      "handwritten": {
-        "name": "heat_2d",
-        "framework": "Hand-cuTile",
-        "time_ms": 0.0058041602373123165,
-        "gpoints_per_s": 11.291211358828233,
-        "gbytes_per_s": 451.6484543531293
-      },
-      "cuda": {
-        "name": "heat_2d",
-        "framework": "CUDA-naive",
-        "time_ms": 0.004278079867362976,
-        "gpoints_per_s": 15.319022092122985,
-        "gbytes_per_s": 612.7608836849193
-      },
-      "cuda_smem": {
-        "name": "heat_2d",
-        "framework": "CUDA-smem",
-        "time_ms": 0.00424127995967865,
-        "gpoints_per_s": 15.451939184171536,
-        "gbytes_per_s": 618.0775673668614
-      },
-      "scaling": [
-        {
-          "framework": "cuTile-1GPU",
-          "time_ms": 0.0057148802280426025,
-          "gpoints_per_s": 11.467606911238219,
-          "num_gpus": 1
-        },
-        {
-          "framework": "cuTile-2GPU",
-          "time_ms": 0.04441728815436363,
-          "gpoints_per_s": 1.4754615313803578,
-          "num_gpus": 2
-        },
-        {
-          "framework": "cuTile-4GPU",
-          "time_ms": 0.11776864528656006,
-          "gpoints_per_s": 0.556480885387913,
-          "num_gpus": 4
-        }
-      ]
-    },
-    {
-      "stencil": "heat_2d",
-      "ndim": 2,
-      "domain": [
-        512,
-        512
-      ],
-      "npoints": 262144,
-      "cutile": {
-        "framework": "cuTile-DSL",
-        "time_ms": 0.005779200196266174,
-        "gpoints_per_s": 45.359909865964845,
-        "gbytes_per_s": 1814.3963946385936,
+        "time_ms": 0.0064271998405456545,
+        "gpoints_per_s": 10.196664430218828,
+        "gbytes_per_s": 407.8665772087531,
         "tile_sizes": [
           16,
           64
@@ -362,55 +287,130 @@
       "cupy": {
         "name": "heat_2d",
         "framework": "CuPy",
-        "time_ms": 0.043234238624572756,
-        "gpoints_per_s": 6.06334258078057,
-        "gbytes_per_s": 242.53370323122283
+        "time_ms": 0.04483168125152588,
+        "gpoints_per_s": 1.461823384055431,
+        "gbytes_per_s": 58.47293536221725
       },
       "jax": {
         "name": "heat_2d",
         "framework": "JAX",
-        "time_ms": 0.0426294282078743,
-        "gpoints_per_s": 6.149367022276363,
-        "gbytes_per_s": 245.97468089105453
+        "time_ms": 0.05464721471071243,
+        "gpoints_per_s": 1.199255997710585,
+        "gbytes_per_s": 47.9702399084234
       },
       "handwritten": {
         "name": "heat_2d",
         "framework": "Hand-cuTile",
-        "time_ms": 0.0060211199522018435,
-        "gpoints_per_s": 43.53741531160451,
-        "gbytes_per_s": 1741.4966124641805
+        "time_ms": 0.006583999991416931,
+        "gpoints_per_s": 9.953827473486388,
+        "gbytes_per_s": 398.15309893945556
       },
       "cuda": {
         "name": "heat_2d",
         "framework": "CUDA-naive",
-        "time_ms": 0.0061593598127365114,
-        "gpoints_per_s": 42.560267295625536,
-        "gbytes_per_s": 1702.4106918250213
+        "time_ms": 0.0047129601240158085,
+        "gpoints_per_s": 13.905485782926217,
+        "gbytes_per_s": 556.2194313170486
       },
       "cuda_smem": {
         "name": "heat_2d",
         "framework": "CUDA-smem",
-        "time_ms": 0.008235840201377869,
-        "gpoints_per_s": 31.82966079843838,
-        "gbytes_per_s": 1273.1864319375352
+        "time_ms": 0.004845440089702606,
+        "gpoints_per_s": 13.525293634168602,
+        "gbytes_per_s": 541.0117453667441
       },
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.005779200196266174,
-          "gpoints_per_s": 45.359909865964845,
+          "time_ms": 0.0064271998405456545,
+          "gpoints_per_s": 10.196664430218828,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.04473557695746422,
-          "gpoints_per_s": 5.859855127145303,
+          "time_ms": 0.049269385635852814,
+          "gpoints_per_s": 1.330156630820867,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11777082458138466,
-          "gpoints_per_s": 2.2258823518625133,
+          "time_ms": 0.11806230992078781,
+          "gpoints_per_s": 0.5550967115921281,
+          "num_gpus": 4
+        }
+      ]
+    },
+    {
+      "stencil": "heat_2d",
+      "ndim": 2,
+      "domain": [
+        512,
+        512
+      ],
+      "npoints": 262144,
+      "cutile": {
+        "framework": "cuTile-DSL",
+        "time_ms": 0.005798400044441223,
+        "gpoints_per_s": 45.2097126777775,
+        "gbytes_per_s": 1808.3885071111001,
+        "tile_sizes": [
+          16,
+          16
+        ],
+        "temporal_steps": 1
+      },
+      "cupy": {
+        "name": "heat_2d",
+        "framework": "CuPy",
+        "time_ms": 0.04307040214538574,
+        "gpoints_per_s": 6.0864070670880475,
+        "gbytes_per_s": 243.45628268352192
+      },
+      "jax": {
+        "name": "heat_2d",
+        "framework": "JAX",
+        "time_ms": 0.038011930882930756,
+        "gpoints_per_s": 6.896361061145559,
+        "gbytes_per_s": 275.8544424458224
+      },
+      "handwritten": {
+        "name": "heat_2d",
+        "framework": "Hand-cuTile",
+        "time_ms": 0.006042240262031555,
+        "gpoints_per_s": 43.385232733506115,
+        "gbytes_per_s": 1735.4093093402444
+      },
+      "cuda": {
+        "name": "heat_2d",
+        "framework": "CUDA-naive",
+        "time_ms": 0.004739199876785278,
+        "gpoints_per_s": 55.31397848064999,
+        "gbytes_per_s": 2212.559139226
+      },
+      "cuda_smem": {
+        "name": "heat_2d",
+        "framework": "CUDA-smem",
+        "time_ms": 0.008240000009536744,
+        "gpoints_per_s": 31.81359219618955,
+        "gbytes_per_s": 1272.543687847582
+      },
+      "scaling": [
+        {
+          "framework": "cuTile-1GPU",
+          "time_ms": 0.005798400044441223,
+          "gpoints_per_s": 45.2097126777775,
+          "num_gpus": 1
+        },
+        {
+          "framework": "cuTile-2GPU",
+          "time_ms": 0.044984351843595505,
+          "gpoints_per_s": 5.827448640617057,
+          "num_gpus": 2
+        },
+        {
+          "framework": "cuTile-4GPU",
+          "time_ms": 0.11907221749424934,
+          "gpoints_per_s": 2.201554699463461,
           "num_gpus": 4
         }
       ]
@@ -425,9 +425,9 @@
       "npoints": 1048576,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.008304640054702758,
-        "gpoints_per_s": 126.26387093155368,
-        "gbytes_per_s": 5050.554837262147,
+        "time_ms": 0.008282880187034608,
+        "gpoints_per_s": 126.59557742261698,
+        "gbytes_per_s": 5063.823096904679,
         "tile_sizes": [
           8,
           32
@@ -437,55 +437,55 @@
       "cupy": {
         "name": "heat_2d",
         "framework": "CuPy",
-        "time_ms": 0.04327392101287842,
-        "gpoints_per_s": 24.23112986890976,
-        "gbytes_per_s": 969.2451947563904
+        "time_ms": 0.04309887886047363,
+        "gpoints_per_s": 24.329542385420574,
+        "gbytes_per_s": 973.181695416823
       },
       "jax": {
         "name": "heat_2d",
         "framework": "JAX",
-        "time_ms": 0.041021499782800674,
-        "gpoints_per_s": 25.56162026137432,
-        "gbytes_per_s": 1022.4648104549728
+        "time_ms": 0.054182019084692,
+        "gpoints_per_s": 19.352840992525014,
+        "gbytes_per_s": 774.1136397010006
       },
       "handwritten": {
         "name": "heat_2d",
         "framework": "Hand-cuTile",
-        "time_ms": 0.010336639881134034,
-        "gpoints_per_s": 101.44263629748903,
-        "gbytes_per_s": 4057.7054518995606
+        "time_ms": 0.01036255955696106,
+        "gpoints_per_s": 101.18889973429566,
+        "gbytes_per_s": 4047.5559893718264
       },
       "cuda": {
         "name": "heat_2d",
         "framework": "CUDA-naive",
-        "time_ms": 0.014404799938201904,
-        "gpoints_per_s": 72.79351358564509,
-        "gbytes_per_s": 2911.740543425804
+        "time_ms": 0.014407039880752563,
+        "gpoints_per_s": 72.78219597357197,
+        "gbytes_per_s": 2911.287838942879
       },
       "cuda_smem": {
         "name": "heat_2d",
         "framework": "CUDA-smem",
-        "time_ms": 0.018510719537734987,
-        "gpoints_per_s": 56.64696058207936,
-        "gbytes_per_s": 2265.878423283174
+        "time_ms": 0.018527679443359375,
+        "gpoints_per_s": 56.595106969849205,
+        "gbytes_per_s": 2263.804278793968
       },
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.008304640054702758,
-          "gpoints_per_s": 126.26387093155368,
+          "time_ms": 0.008282880187034608,
+          "gpoints_per_s": 126.59557742261698,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.045098885893821716,
-          "gpoints_per_s": 23.25059653288794,
+          "time_ms": 0.049408599734306335,
+          "gpoints_per_s": 21.222540319675005,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11774297803640366,
-          "gpoints_per_s": 8.905635117160042,
+          "time_ms": 0.12678921222686768,
+          "gpoints_per_s": 8.270230420895368,
           "num_gpus": 4
         }
       ]
@@ -500,67 +500,67 @@
       "npoints": 4194304,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.0267411208152771,
-        "gpoints_per_s": 156.84847426454203,
-        "gbytes_per_s": 6273.938970581682,
+        "time_ms": 0.026803839206695556,
+        "gpoints_per_s": 156.48146400431582,
+        "gbytes_per_s": 6259.258560172633,
         "tile_sizes": [
           8,
-          32
+          64
         ],
         "temporal_steps": 1
       },
       "cupy": {
         "name": "heat_2d",
         "framework": "CuPy",
-        "time_ms": 0.08406399726867676,
-        "gpoints_per_s": 49.894177487118455,
-        "gbytes_per_s": 1995.7670994847385
+        "time_ms": 0.08233599662780762,
+        "gpoints_per_s": 50.94131572804019,
+        "gbytes_per_s": 2037.6526291216076
       },
       "jax": {
         "name": "heat_2d",
         "framework": "JAX",
-        "time_ms": 0.055913813412189484,
-        "gpoints_per_s": 75.01373531939463,
-        "gbytes_per_s": 3000.549412775785
+        "time_ms": 0.05293963477015495,
+        "gpoints_per_s": 79.22804942289788,
+        "gbytes_per_s": 3169.121976915915
       },
       "handwritten": {
         "name": "heat_2d",
         "framework": "Hand-cuTile",
-        "time_ms": 0.02731744050979614,
-        "gpoints_per_s": 153.53942103382292,
-        "gbytes_per_s": 6141.576841352917
+        "time_ms": 0.026812798976898193,
+        "gpoints_per_s": 156.42917412739328,
+        "gbytes_per_s": 6257.166965095731
       },
       "cuda": {
         "name": "heat_2d",
         "framework": "CUDA-naive",
-        "time_ms": 0.04716288089752197,
-        "gpoints_per_s": 88.93231117737713,
-        "gbytes_per_s": 3557.2924470950857
+        "time_ms": 0.047181439399719236,
+        "gpoints_per_s": 88.89733025027122,
+        "gbytes_per_s": 3555.893210010849
       },
       "cuda_smem": {
         "name": "heat_2d",
         "framework": "CUDA-smem",
-        "time_ms": 0.06147327899932861,
-        "gpoints_per_s": 68.22971001832859,
-        "gbytes_per_s": 2729.1884007331437
+        "time_ms": 0.06153151988983154,
+        "gpoints_per_s": 68.16512914859973,
+        "gbytes_per_s": 2726.605165943989
       },
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.0267411208152771,
-          "gpoints_per_s": 156.84847426454203,
+          "time_ms": 0.026803839206695556,
+          "gpoints_per_s": 156.48146400431582,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.04488680511713028,
-          "gpoints_per_s": 93.44180297651249,
+          "time_ms": 0.0501224584877491,
+          "gpoints_per_s": 83.68113070561311,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11963624507188797,
-          "gpoints_per_s": 35.058806781169814,
+          "time_ms": 0.12431669980287553,
+          "gpoints_per_s": 33.73886216936867,
           "num_gpus": 4
         }
       ]
@@ -575,9 +575,9 @@
       "npoints": 16777216,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.18970399856567383,
-        "gpoints_per_s": 88.43891603155575,
-        "gbytes_per_s": 3537.5566412622297,
+        "time_ms": 0.18937471389770508,
+        "gpoints_per_s": 88.59269357926307,
+        "gbytes_per_s": 3543.707743170523,
         "tile_sizes": [
           16,
           128
@@ -587,55 +587,55 @@
       "cupy": {
         "name": "heat_2d",
         "framework": "CuPy",
-        "time_ms": 0.8915974426269532,
-        "gpoints_per_s": 18.81703019534078,
-        "gbytes_per_s": 752.6812078136313
+        "time_ms": 0.8920438385009766,
+        "gpoints_per_s": 18.8076137919332,
+        "gbytes_per_s": 752.3045516773279
       },
       "jax": {
         "name": "heat_2d",
         "framework": "JAX",
-        "time_ms": 0.0804155133664608,
-        "gpoints_per_s": 208.6315848478726,
-        "gbytes_per_s": 8345.263393914904
+        "time_ms": 0.08254917338490486,
+        "gpoints_per_s": 203.2390551238145,
+        "gbytes_per_s": 8129.56220495258
       },
       "handwritten": {
         "name": "heat_2d",
         "framework": "Hand-cuTile",
-        "time_ms": 0.19425792694091798,
-        "gpoints_per_s": 86.36566993275213,
-        "gbytes_per_s": 3454.6267973100853
+        "time_ms": 0.19403520584106446,
+        "gpoints_per_s": 86.46480378278532,
+        "gbytes_per_s": 3458.592151311413
       },
       "cuda": {
         "name": "heat_2d",
         "framework": "CUDA-naive",
-        "time_ms": 0.20408927917480468,
-        "gpoints_per_s": 82.20527833620369,
-        "gbytes_per_s": 3288.211133448148
+        "time_ms": 0.20328832626342774,
+        "gpoints_per_s": 82.5291658816627,
+        "gbytes_per_s": 3301.1666352665084
       },
       "cuda_smem": {
         "name": "heat_2d",
         "framework": "CUDA-smem",
-        "time_ms": 0.2504614448547363,
-        "gpoints_per_s": 66.98522405207125,
-        "gbytes_per_s": 2679.40896208285
+        "time_ms": 0.2500771141052246,
+        "gpoints_per_s": 67.08817022312834,
+        "gbytes_per_s": 2683.526808925134
       },
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.18970399856567383,
-          "gpoints_per_s": 88.43891603155575,
+          "time_ms": 0.18937471389770508,
+          "gpoints_per_s": 88.59269357926307,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.09285980835556984,
-          "gpoints_per_s": 180.67252449798625,
+          "time_ms": 0.09369412437081337,
+          "gpoints_per_s": 179.06369382994376,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11838776990771294,
-          "gpoints_per_s": 141.71409777444393,
+          "time_ms": 0.11885588988661766,
+          "gpoints_per_s": 141.1559495789783,
           "num_gpus": 4
         }
       ]
@@ -650,9 +650,9 @@
       "npoints": 65536,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.005820479989051819,
-        "gpoints_per_s": 11.259552497950619,
-        "gbytes_per_s": 540.4585199016296,
+        "time_ms": 0.005788480043411255,
+        "gpoints_per_s": 11.321797692746031,
+        "gbytes_per_s": 543.4462892518096,
         "tile_sizes": [
           64,
           8
@@ -662,55 +662,55 @@
       "cupy": {
         "name": "laplacian_2d_5pt",
         "framework": "CuPy",
-        "time_ms": 0.05463359832763672,
-        "gpoints_per_s": 1.1995548894103911,
-        "gbytes_per_s": 57.578634691698774
+        "time_ms": 0.054681921005249025,
+        "gpoints_per_s": 1.1984948369628248,
+        "gbytes_per_s": 57.52775217421559
       },
       "jax": {
         "name": "laplacian_2d_5pt",
         "framework": "JAX",
-        "time_ms": 0.03998028114438057,
-        "gpoints_per_s": 1.6392080826878181,
-        "gbytes_per_s": 78.68198796901527
+        "time_ms": 0.04036538302898407,
+        "gpoints_per_s": 1.6235693825311246,
+        "gbytes_per_s": 77.93133036149398
       },
       "handwritten": {
         "name": "laplacian_2d_5pt",
         "framework": "Hand-cuTile",
-        "time_ms": 0.005845440030097962,
-        "gpoints_per_s": 11.211474185443265,
-        "gbytes_per_s": 538.1507609012767
+        "time_ms": 0.005746560096740723,
+        "gpoints_per_s": 11.404387824495224,
+        "gbytes_per_s": 547.4106155757709
       },
       "cuda": {
         "name": "laplacian_2d_5pt",
         "framework": "CUDA-naive",
-        "time_ms": 0.004229759871959686,
-        "gpoints_per_s": 15.494023770582647,
-        "gbytes_per_s": 743.7131409879671
+        "time_ms": 0.004169920086860656,
+        "gpoints_per_s": 15.716368331974216,
+        "gbytes_per_s": 754.3856799347625
       },
       "cuda_smem": {
         "name": "laplacian_2d_5pt",
         "framework": "CUDA-smem",
-        "time_ms": 0.004210560023784638,
-        "gpoints_per_s": 15.564675394674302,
-        "gbytes_per_s": 747.1044189443666
+        "time_ms": 0.004128639996051789,
+        "gpoints_per_s": 15.873507998438217,
+        "gbytes_per_s": 761.9283839250344
       },
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.005820479989051819,
-          "gpoints_per_s": 11.259552497950619,
+          "time_ms": 0.005788480043411255,
+          "gpoints_per_s": 11.321797692746031,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.04579136148095131,
-          "gpoints_per_s": 1.4311869724000725,
+          "time_ms": 0.04443071782588959,
+          "gpoints_per_s": 1.475015556958039,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11740667745471,
-          "gpoints_per_s": 0.5581965303913886,
+          "time_ms": 0.11938350275158882,
+          "gpoints_per_s": 0.5489535697102655,
           "num_gpus": 4
         }
       ]
@@ -725,67 +725,67 @@
       "npoints": 262144,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.0057030397653579715,
-        "gpoints_per_s": 45.96566231088617,
-        "gbytes_per_s": 2206.3517909225357,
+        "time_ms": 0.005969280004501342,
+        "gpoints_per_s": 43.91551406573678,
+        "gbytes_per_s": 2107.944675155365,
         "tile_sizes": [
-          32,
-          16
+          16,
+          32
         ],
         "temporal_steps": 1
       },
       "cupy": {
         "name": "laplacian_2d_5pt",
         "framework": "CuPy",
-        "time_ms": 0.054472641944885256,
-        "gpoints_per_s": 4.812397391432455,
-        "gbytes_per_s": 230.99507478875788
+        "time_ms": 0.05395391941070557,
+        "gpoints_per_s": 4.85866463202644,
+        "gbytes_per_s": 233.2159023372691
       },
       "jax": {
         "name": "laplacian_2d_5pt",
         "framework": "JAX",
-        "time_ms": 0.041276682168245316,
-        "gpoints_per_s": 6.350898042906916,
-        "gbytes_per_s": 304.843106059532
+        "time_ms": 0.04811165854334831,
+        "gpoints_per_s": 5.448658556715725,
+        "gbytes_per_s": 261.53561072235476
       },
       "handwritten": {
         "name": "laplacian_2d_5pt",
         "framework": "Hand-cuTile",
-        "time_ms": 0.006273279786109924,
-        "gpoints_per_s": 41.78739175326279,
-        "gbytes_per_s": 2005.7948041566137
+        "time_ms": 0.0063331198692321775,
+        "gpoints_per_s": 41.392553024861996,
+        "gbytes_per_s": 1986.842545193376
       },
       "cuda": {
         "name": "laplacian_2d_5pt",
         "framework": "CUDA-naive",
-        "time_ms": 0.006191359758377075,
-        "gpoints_per_s": 42.34029522275977,
-        "gbytes_per_s": 2032.3341706924693
+        "time_ms": 0.006195840239524841,
+        "gpoints_per_s": 42.309677116546155,
+        "gbytes_per_s": 2030.8645015942152
       },
       "cuda_smem": {
         "name": "laplacian_2d_5pt",
         "framework": "CUDA-smem",
-        "time_ms": 0.00823423981666565,
-        "gpoints_per_s": 31.835847125734052,
-        "gbytes_per_s": 1528.1206620352343
+        "time_ms": 0.008229439854621887,
+        "gpoints_per_s": 31.854415929994612,
+        "gbytes_per_s": 1529.0119646397413
       },
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.0057030397653579715,
-          "gpoints_per_s": 45.96566231088617,
+          "time_ms": 0.005969280004501342,
+          "gpoints_per_s": 43.91551406573678,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.04492044448852539,
-          "gpoints_per_s": 5.835739227089857,
+          "time_ms": 0.0444759801030159,
+          "gpoints_per_s": 5.894057857585562,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.1176070049405098,
-          "gpoints_per_s": 2.2289828750643097,
+          "time_ms": 0.1180737279355526,
+          "gpoints_per_s": 2.220172129595877,
           "num_gpus": 4
         }
       ]
@@ -800,11 +800,11 @@
       "npoints": 1048576,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.010325759649276733,
-        "gpoints_per_s": 101.5495261962104,
-        "gbytes_per_s": 4874.377257418099,
+        "time_ms": 0.010325119495391846,
+        "gpoints_per_s": 101.55582223217705,
+        "gbytes_per_s": 4874.679467144499,
         "tile_sizes": [
-          8,
+          16,
           16
         ],
         "temporal_steps": 1
@@ -812,55 +812,55 @@
       "cupy": {
         "name": "laplacian_2d_5pt",
         "framework": "CuPy",
-        "time_ms": 0.05476416110992432,
-        "gpoints_per_s": 19.147120648762712,
-        "gbytes_per_s": 919.0617911406102
+        "time_ms": 0.054949440956115723,
+        "gpoints_per_s": 19.082559926995877,
+        "gbytes_per_s": 915.9628764958021
       },
       "jax": {
         "name": "laplacian_2d_5pt",
         "framework": "JAX",
-        "time_ms": 0.03973441198468208,
-        "gpoints_per_s": 26.389619164472194,
-        "gbytes_per_s": 1266.7017198946655
+        "time_ms": 0.03361562266945839,
+        "gpoints_per_s": 31.193115484149217,
+        "gbytes_per_s": 1497.2695432391624
       },
       "handwritten": {
         "name": "laplacian_2d_5pt",
         "framework": "Hand-cuTile",
-        "time_ms": 0.012376320362091065,
-        "gpoints_per_s": 84.72437439578655,
-        "gbytes_per_s": 4066.769970997754
+        "time_ms": 0.01238144040107727,
+        "gpoints_per_s": 84.6893387225582,
+        "gbytes_per_s": 4065.088258682794
       },
       "cuda": {
         "name": "laplacian_2d_5pt",
         "framework": "CUDA-naive",
-        "time_ms": 0.014423680305480958,
-        "gpoints_per_s": 72.69822803834221,
-        "gbytes_per_s": 3489.5149458404258
+        "time_ms": 0.014390079975128174,
+        "gpoints_per_s": 72.86797584254984,
+        "gbytes_per_s": 3497.6628404423923
       },
       "cuda_smem": {
         "name": "laplacian_2d_5pt",
         "framework": "CUDA-smem",
-        "time_ms": 0.01850592017173767,
-        "gpoints_per_s": 56.66165152929765,
-        "gbytes_per_s": 2719.759273406287
+        "time_ms": 0.018510400056838988,
+        "gpoints_per_s": 56.647938282273124,
+        "gbytes_per_s": 2719.1010375491096
       },
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.010325759649276733,
-          "gpoints_per_s": 101.5495261962104,
+          "time_ms": 0.010325119495391846,
+          "gpoints_per_s": 101.55582223217705,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.04483792930841446,
-          "gpoints_per_s": 23.385914920099136,
+          "time_ms": 0.04508070647716522,
+          "gpoints_per_s": 23.25997265662055,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.1189175620675087,
-          "gpoints_per_s": 8.817671517725282,
+          "time_ms": 0.11811118572950363,
+          "gpoints_per_s": 8.877872095886262,
           "num_gpus": 4
         }
       ]
@@ -875,67 +875,67 @@
       "npoints": 4194304,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.032882559299469,
-        "gpoints_per_s": 127.5540617687788,
-        "gbytes_per_s": 6122.594964901382,
+        "time_ms": 0.03289151906967163,
+        "gpoints_per_s": 127.51931557540779,
+        "gbytes_per_s": 6120.927147619574,
         "tile_sizes": [
-          8,
-          128
+          16,
+          16
         ],
         "temporal_steps": 1
       },
       "cupy": {
         "name": "laplacian_2d_5pt",
         "framework": "CuPy",
-        "time_ms": 0.11068415641784668,
-        "gpoints_per_s": 37.894348529576106,
-        "gbytes_per_s": 1818.928729419653
+        "time_ms": 0.10996383666992188,
+        "gpoints_per_s": 38.14257602333419,
+        "gbytes_per_s": 1830.8436491200414
       },
       "jax": {
         "name": "laplacian_2d_5pt",
         "framework": "JAX",
-        "time_ms": 0.05612894892692566,
-        "gpoints_per_s": 74.72621668830051,
-        "gbytes_per_s": 3586.8584010384247
+        "time_ms": 0.04821736365556717,
+        "gpoints_per_s": 86.98741868098229,
+        "gbytes_per_s": 4175.39609668715
       },
       "handwritten": {
         "name": "laplacian_2d_5pt",
         "framework": "Hand-cuTile",
-        "time_ms": 0.032882559299469,
-        "gpoints_per_s": 127.5540617687788,
-        "gbytes_per_s": 6122.594964901382
+        "time_ms": 0.032938559055328366,
+        "gpoints_per_s": 127.33720357817234,
+        "gbytes_per_s": 6112.185771752272
       },
       "cuda": {
         "name": "laplacian_2d_5pt",
         "framework": "CUDA-naive",
-        "time_ms": 0.04719103813171387,
-        "gpoints_per_s": 88.87924839231913,
-        "gbytes_per_s": 4266.203922831318
+        "time_ms": 0.04721792221069336,
+        "gpoints_per_s": 88.8286439476179,
+        "gbytes_per_s": 4263.774909485659
       },
       "cuda_smem": {
         "name": "laplacian_2d_5pt",
         "framework": "CUDA-smem",
-        "time_ms": 0.061417279243469236,
-        "gpoints_per_s": 68.29192129096143,
-        "gbytes_per_s": 3278.0122219661484
+        "time_ms": 0.06146399974822998,
+        "gpoints_per_s": 68.24001069212528,
+        "gbytes_per_s": 3275.520513222014
       },
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.032882559299469,
-          "gpoints_per_s": 127.5540617687788,
+          "time_ms": 0.03289151906967163,
+          "gpoints_per_s": 127.51931557540779,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.044488999992609024,
-          "gpoints_per_s": 94.27732699536517,
+          "time_ms": 0.04973730072379112,
+          "gpoints_per_s": 84.32914410238018,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11783752590417862,
-          "gpoints_per_s": 35.59395844249702,
+          "time_ms": 0.1179325021803379,
+          "gpoints_per_s": 35.56529304861377,
           "num_gpus": 4
         }
       ]
@@ -950,9 +950,9 @@
       "npoints": 16777216,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.19096799850463866,
-        "gpoints_per_s": 87.85354683178751,
-        "gbytes_per_s": 4216.9702479258,
+        "time_ms": 0.19066848754882812,
+        "gpoints_per_s": 87.9915512819261,
+        "gbytes_per_s": 4223.594461532453,
         "tile_sizes": [
           8,
           128
@@ -962,55 +962,55 @@
       "cupy": {
         "name": "laplacian_2d_5pt",
         "framework": "CuPy",
-        "time_ms": 1.1548502349853516,
-        "gpoints_per_s": 14.527611885720235,
-        "gbytes_per_s": 697.3253705145713
+        "time_ms": 1.1552188873291016,
+        "gpoints_per_s": 14.522975848143716,
+        "gbytes_per_s": 697.1028407108984
       },
       "jax": {
         "name": "laplacian_2d_5pt",
         "framework": "JAX",
-        "time_ms": 0.07949862629175186,
-        "gpoints_per_s": 211.03781011799282,
-        "gbytes_per_s": 10129.814885663654
+        "time_ms": 0.07455190643668175,
+        "gpoints_per_s": 225.04073741225096,
+        "gbytes_per_s": 10801.955395788045
       },
       "handwritten": {
         "name": "laplacian_2d_5pt",
         "framework": "Hand-cuTile",
-        "time_ms": 0.19213727951049805,
-        "gpoints_per_s": 87.31890054206436,
-        "gbytes_per_s": 4191.307226019089
+        "time_ms": 0.1919411277770996,
+        "gpoints_per_s": 87.40813495418922,
+        "gbytes_per_s": 4195.590477801083
       },
       "cuda": {
         "name": "laplacian_2d_5pt",
         "framework": "CUDA-naive",
-        "time_ms": 0.20692672729492187,
-        "gpoints_per_s": 81.07805221356595,
-        "gbytes_per_s": 3891.746506251166
+        "time_ms": 0.20708703994750977,
+        "gpoints_per_s": 81.01528711913846,
+        "gbytes_per_s": 3888.733781718646
       },
       "cuda_smem": {
         "name": "laplacian_2d_5pt",
         "framework": "CUDA-smem",
-        "time_ms": 0.25064287185668943,
-        "gpoints_per_s": 66.93673702235881,
-        "gbytes_per_s": 3212.963377073223
+        "time_ms": 0.25077823638916014,
+        "gpoints_per_s": 66.90060605564253,
+        "gbytes_per_s": 3211.2290906708413
       },
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.19096799850463866,
-          "gpoints_per_s": 87.85354683178751,
+          "time_ms": 0.19066848754882812,
+          "gpoints_per_s": 87.9915512819261,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.09009428322315216,
-          "gpoints_per_s": 186.21843029090928,
+          "time_ms": 0.09331313893198967,
+          "gpoints_per_s": 179.79478765823004,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11874768882989883,
-          "gpoints_per_s": 141.28456869617622,
+          "time_ms": 0.11910486966371536,
+          "gpoints_per_s": 140.86087367686432,
           "num_gpus": 4
         }
       ]
@@ -1025,28 +1025,28 @@
       "npoints": 65536,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.005744320154190063,
-        "gpoints_per_s": 11.408834856148513,
-        "gbytes_per_s": 912.7067884918811,
+        "time_ms": 0.005731199979782105,
+        "gpoints_per_s": 11.434952580819143,
+        "gbytes_per_s": 914.7962064655314,
         "tile_sizes": [
-          32,
-          8
+          16,
+          16
         ],
         "temporal_steps": 1
       },
       "cupy": {
         "name": "laplacian_2d_9pt",
         "framework": "CuPy",
-        "time_ms": 0.1859107208251953,
-        "gpoints_per_s": 0.35251329083717003,
-        "gbytes_per_s": 28.201063266973602
+        "time_ms": 0.1826793670654297,
+        "gpoints_per_s": 0.3587487796392856,
+        "gbytes_per_s": 28.699902371142844
       },
       "jax": {
         "name": "laplacian_2d_9pt",
         "framework": "JAX",
-        "time_ms": 0.04035048186779022,
-        "gpoints_per_s": 1.6241689557693764,
-        "gbytes_per_s": 129.93351646155008
+        "time_ms": 0.05010981112718582,
+        "gpoints_per_s": 1.3078476754514266,
+        "gbytes_per_s": 104.6278140361141
       },
       "handwritten": {
         "framework": "handwritten",
@@ -1063,20 +1063,20 @@
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.005744320154190063,
-          "gpoints_per_s": 11.408834856148513,
+          "time_ms": 0.005731199979782105,
+          "gpoints_per_s": 11.434952580819143,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.04427686333656311,
-          "gpoints_per_s": 1.480140982477443,
+          "time_ms": 0.044539887458086014,
+          "gpoints_per_s": 1.471400215406297,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11744413524866104,
-          "gpoints_per_s": 0.5580184984226121,
+          "time_ms": 0.11818848550319672,
+          "gpoints_per_s": 0.5545041018249397,
           "num_gpus": 4
         }
       ]
@@ -1091,28 +1091,28 @@
       "npoints": 262144,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.00830623984336853,
-        "gpoints_per_s": 31.55988810138783,
-        "gbytes_per_s": 2524.7910481110266,
+        "time_ms": 0.0083433598279953,
+        "gpoints_per_s": 31.419476734109235,
+        "gbytes_per_s": 2513.558138728739,
         "tile_sizes": [
-          8,
-          16
+          16,
+          8
         ],
         "temporal_steps": 1
       },
       "cupy": {
         "name": "laplacian_2d_9pt",
         "framework": "CuPy",
-        "time_ms": 0.18382848739624025,
-        "gpoints_per_s": 1.4260248980613734,
-        "gbytes_per_s": 114.08199184490988
+        "time_ms": 0.18153600692749022,
+        "gpoints_per_s": 1.4440330843274884,
+        "gbytes_per_s": 115.52264674619907
       },
       "jax": {
         "name": "laplacian_2d_9pt",
         "framework": "JAX",
-        "time_ms": 0.03363005816936493,
-        "gpoints_per_s": 7.794931506802991,
-        "gbytes_per_s": 623.5945205442392
+        "time_ms": 0.036079902201890945,
+        "gpoints_per_s": 7.265651623253597,
+        "gbytes_per_s": 581.2521298602877
       },
       "handwritten": {
         "framework": "handwritten",
@@ -1129,20 +1129,20 @@
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.00830623984336853,
-          "gpoints_per_s": 31.55988810138783,
+          "time_ms": 0.0083433598279953,
+          "gpoints_per_s": 31.419476734109235,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.0445467047393322,
-          "gpoints_per_s": 5.884700148618216,
+          "time_ms": 0.044540874660015106,
+          "gpoints_per_s": 5.8854704134341995,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11797277256846428,
-          "gpoints_per_s": 2.222072045037913,
+          "time_ms": 0.11891517788171768,
+          "gpoints_per_s": 2.2044620768321845,
           "num_gpus": 4
         }
       ]
@@ -1157,28 +1157,28 @@
       "npoints": 1048576,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.028773438930511475,
-        "gpoints_per_s": 36.44249832396938,
-        "gbytes_per_s": 2915.399865917551,
+        "time_ms": 0.028846399784088136,
+        "gpoints_per_s": 36.350324749308975,
+        "gbytes_per_s": 2908.0259799447176,
         "tile_sizes": [
           16,
-          16
+          8
         ],
         "temporal_steps": 1
       },
       "cupy": {
         "name": "laplacian_2d_9pt",
         "framework": "CuPy",
-        "time_ms": 0.18416000366210938,
-        "gpoints_per_s": 5.6938313376876994,
-        "gbytes_per_s": 455.506507015016
+        "time_ms": 0.18339071273803711,
+        "gpoints_per_s": 5.71771593198304,
+        "gbytes_per_s": 457.41727455864327
       },
       "jax": {
         "name": "laplacian_2d_9pt",
         "framework": "JAX",
-        "time_ms": 0.03431132063269615,
-        "gpoints_per_s": 30.560642396282017,
-        "gbytes_per_s": 2444.851391702561
+        "time_ms": 0.037665944546461105,
+        "gpoints_per_s": 27.83883459252102,
+        "gbytes_per_s": 2227.1067674016817
       },
       "handwritten": {
         "framework": "handwritten",
@@ -1195,20 +1195,20 @@
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.028773438930511475,
-          "gpoints_per_s": 36.44249832396938,
+          "time_ms": 0.028846399784088136,
+          "gpoints_per_s": 36.350324749308975,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.04489423707127571,
-          "gpoints_per_s": 23.35658357074301,
+          "time_ms": 0.04528701305389404,
+          "gpoints_per_s": 23.154011035175508,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11848453432321548,
-          "gpoints_per_s": 8.849897634231114,
+          "time_ms": 0.11821212247014046,
+          "gpoints_per_s": 8.870291625673694,
           "num_gpus": 4
         }
       ]
@@ -1223,9 +1223,9 @@
       "npoints": 4194304,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.1031113624572754,
-        "gpoints_per_s": 40.67741808511091,
-        "gbytes_per_s": 3254.1934468088725,
+        "time_ms": 0.10300864219665527,
+        "gpoints_per_s": 40.71798162325637,
+        "gbytes_per_s": 3257.4385298605093,
         "tile_sizes": [
           8,
           16
@@ -1235,16 +1235,16 @@
       "cupy": {
         "name": "laplacian_2d_9pt",
         "framework": "CuPy",
-        "time_ms": 0.3934793472290039,
-        "gpoints_per_s": 10.659527697038,
-        "gbytes_per_s": 852.76221576304
+        "time_ms": 0.3885580825805664,
+        "gpoints_per_s": 10.794535458235702,
+        "gbytes_per_s": 863.5628366588561
       },
       "jax": {
         "name": "laplacian_2d_9pt",
         "framework": "JAX",
-        "time_ms": 0.05897879600524902,
-        "gpoints_per_s": 71.11545647060535,
-        "gbytes_per_s": 5689.236517648429
+        "time_ms": 0.057972501963377,
+        "gpoints_per_s": 72.34988758376635,
+        "gbytes_per_s": 5787.991006701308
       },
       "handwritten": {
         "framework": "handwritten",
@@ -1261,20 +1261,20 @@
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.1031113624572754,
-          "gpoints_per_s": 40.67741808511091,
+          "time_ms": 0.10300864219665527,
+          "gpoints_per_s": 40.71798162325637,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.08034726604819298,
-          "gpoints_per_s": 52.20219935653094,
+          "time_ms": 0.07631739601492882,
+          "gpoints_per_s": 54.95868856924221,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11776303872466087,
-          "gpoints_per_s": 35.61647224310005,
+          "time_ms": 0.11903855949640274,
+          "gpoints_per_s": 35.23483497905356,
           "num_gpus": 4
         }
       ]
@@ -1289,9 +1289,9 @@
       "npoints": 16777216,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.4010176086425781,
-        "gpoints_per_s": 41.83660676844073,
-        "gbytes_per_s": 3346.928541475258,
+        "time_ms": 0.4007056045532227,
+        "gpoints_per_s": 41.86918228584848,
+        "gbytes_per_s": 3349.5345828678787,
         "tile_sizes": [
           16,
           8
@@ -1301,16 +1301,16 @@
       "cupy": {
         "name": "laplacian_2d_9pt",
         "framework": "CuPy",
-        "time_ms": 3.824146728515625,
-        "gpoints_per_s": 4.387178942402197,
-        "gbytes_per_s": 350.9743153921757
+        "time_ms": 3.826659851074219,
+        "gpoints_per_s": 4.384297704247296,
+        "gbytes_per_s": 350.74381633978373
       },
       "jax": {
         "name": "laplacian_2d_9pt",
         "framework": "JAX",
-        "time_ms": 0.09810738265514374,
-        "gpoints_per_s": 171.00870032353652,
-        "gbytes_per_s": 13680.69602588292
+        "time_ms": 0.09729107841849327,
+        "gpoints_per_s": 172.44351972164958,
+        "gbytes_per_s": 13795.481577731965
       },
       "handwritten": {
         "framework": "handwritten",
@@ -1327,20 +1327,20 @@
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.4010176086425781,
-          "gpoints_per_s": 41.83660676844073,
+          "time_ms": 0.4007056045532227,
+          "gpoints_per_s": 41.86918228584848,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.24114791303873062,
-          "gpoints_per_s": 69.57230435291149,
+          "time_ms": 0.23543978109955788,
+          "gpoints_per_s": 71.25905368093083,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.15142759308218956,
-          "gpoints_per_s": 110.79365166224308,
+          "time_ms": 0.15253888443112373,
+          "gpoints_per_s": 109.986486806749,
           "num_gpus": 4
         }
       ]
@@ -1356,68 +1356,68 @@
       "npoints": 32768,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.00602944016456604,
-        "gpoints_per_s": 5.4346670844453815,
-        "gbytes_per_s": 347.8186934045044,
+        "time_ms": 0.0059190398454666135,
+        "gpoints_per_s": 5.536033014729066,
+        "gbytes_per_s": 354.3061129426602,
         "tile_sizes": [
           4,
-          4,
-          8
+          8,
+          4
         ],
         "temporal_steps": 1
       },
       "cupy": {
         "name": "laplacian_3d_7pt",
         "framework": "CuPy",
-        "time_ms": 0.07749887943267822,
-        "gpoints_per_s": 0.4228190167377185,
-        "gbytes_per_s": 27.060417071213983
+        "time_ms": 0.07767199993133544,
+        "gpoints_per_s": 0.4218766097045006,
+        "gbytes_per_s": 27.000103021088037
       },
       "jax": {
         "name": "laplacian_3d_7pt",
         "framework": "JAX",
-        "time_ms": 0.03523193299770355,
-        "gpoints_per_s": 0.9300653473125032,
-        "gbytes_per_s": 59.52418222800021
+        "time_ms": 0.05047023296356201,
+        "gpoints_per_s": 0.6492539874673752,
+        "gbytes_per_s": 41.55225519791201
       },
       "handwritten": {
         "name": "laplacian_3d_7pt",
         "framework": "Hand-cuTile",
-        "time_ms": 0.0060559999942779545,
-        "gpoints_per_s": 5.410832237609152,
-        "gbytes_per_s": 346.2932632069857
+        "time_ms": 0.006197440028190612,
+        "gpoints_per_s": 5.287344427851907,
+        "gbytes_per_s": 338.39004338252204
       },
       "cuda": {
         "name": "laplacian_3d_7pt",
         "framework": "CUDA-naive",
-        "time_ms": 0.00443231999874115,
-        "gpoints_per_s": 7.392968018849414,
-        "gbytes_per_s": 473.1499532063625
+        "time_ms": 0.0044268798828125,
+        "gpoints_per_s": 7.40205310905832,
+        "gbytes_per_s": 473.7313989797325
       },
       "cuda_smem": {
         "name": "laplacian_3d_7pt",
         "framework": "CUDA-smem",
-        "time_ms": 0.004464319944381714,
-        "gpoints_per_s": 7.339975720431526,
-        "gbytes_per_s": 469.75844610761766
+        "time_ms": 0.004368320107460022,
+        "gpoints_per_s": 7.501281772835345,
+        "gbytes_per_s": 480.08203346146206
       },
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.00602944016456604,
-          "gpoints_per_s": 5.4346670844453815,
+          "time_ms": 0.0059190398454666135,
+          "gpoints_per_s": 5.536033014729066,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.04584526643157005,
-          "gpoints_per_s": 0.7147520900311582,
+          "time_ms": 0.04484936594963074,
+          "gpoints_per_s": 0.7306234838815997,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11712929233908653,
-          "gpoints_per_s": 0.2797592245766961,
+          "time_ms": 0.11971861124038696,
+          "gpoints_per_s": 0.2737084874314491,
           "num_gpus": 4
         }
       ]
@@ -1433,68 +1433,68 @@
       "npoints": 262144,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.005930879712104797,
-        "gpoints_per_s": 44.199851071835056,
-        "gbytes_per_s": 2828.7904685974436,
+        "time_ms": 0.006058880090713501,
+        "gpoints_per_s": 43.2660815324255,
+        "gbytes_per_s": 2769.029218075232,
         "tile_sizes": [
           4,
           4,
-          8
+          16
         ],
         "temporal_steps": 1
       },
       "cupy": {
         "name": "laplacian_3d_7pt",
         "framework": "CuPy",
-        "time_ms": 0.07922592163085937,
-        "gpoints_per_s": 3.308816036516665,
-        "gbytes_per_s": 211.76422633706656
+        "time_ms": 0.07637728214263916,
+        "gpoints_per_s": 3.432224774775703,
+        "gbytes_per_s": 219.66238558564498
       },
       "jax": {
         "name": "laplacian_3d_7pt",
         "framework": "JAX",
-        "time_ms": 0.04319986328482628,
-        "gpoints_per_s": 6.06816735209615,
-        "gbytes_per_s": 388.3627105341536
+        "time_ms": 0.03058556467294693,
+        "gpoints_per_s": 8.57084061723626,
+        "gbytes_per_s": 548.5337995031207
       },
       "handwritten": {
         "name": "laplacian_3d_7pt",
         "framework": "Hand-cuTile",
-        "time_ms": 0.006102719902992248,
-        "gpoints_per_s": 42.95527308593454,
-        "gbytes_per_s": 2749.1374774998108
+        "time_ms": 0.006179519891738892,
+        "gpoints_per_s": 42.421418587946924,
+        "gbytes_per_s": 2714.970789628603
       },
       "cuda": {
         "name": "laplacian_3d_7pt",
         "framework": "CUDA-naive",
-        "time_ms": 0.0062102401256561275,
-        "gpoints_per_s": 42.21157228961478,
-        "gbytes_per_s": 2701.540626535346
+        "time_ms": 0.0061948800086975096,
+        "gpoints_per_s": 42.316235283323344,
+        "gbytes_per_s": 2708.239058132694
       },
       "cuda_smem": {
         "name": "laplacian_3d_7pt",
         "framework": "CUDA-smem",
-        "time_ms": 0.006210560202598572,
-        "gpoints_per_s": 42.20939680937572,
-        "gbytes_per_s": 2701.401395800046
+        "time_ms": 0.006192319989204407,
+        "gpoints_per_s": 42.333729596826025,
+        "gbytes_per_s": 2709.3586941968656
       },
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.005930879712104797,
-          "gpoints_per_s": 44.199851071835056,
+          "time_ms": 0.006058880090713501,
+          "gpoints_per_s": 43.2660815324255,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.04510493949055672,
-          "gpoints_per_s": 5.811869009488043,
+          "time_ms": 0.04510793834924698,
+          "gpoints_per_s": 5.811482625748869,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11798998340964317,
-          "gpoints_per_s": 2.2217479181251867,
+          "time_ms": 0.11946121230721474,
+          "gpoints_per_s": 2.194385900972211,
           "num_gpus": 4
         }
       ]
@@ -1510,68 +1510,68 @@
       "npoints": 2097152,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.023758080005645752,
-        "gpoints_per_s": 88.2711060616701,
-        "gbytes_per_s": 5649.350787946886,
+        "time_ms": 0.022724480628967286,
+        "gpoints_per_s": 92.28602555284473,
+        "gbytes_per_s": 5906.305635382063,
         "tile_sizes": [
           4,
           4,
-          8
+          16
         ],
         "temporal_steps": 1
       },
       "cupy": {
         "name": "laplacian_3d_7pt",
         "framework": "CuPy",
-        "time_ms": 0.08618080139160156,
-        "gpoints_per_s": 24.334329295345476,
-        "gbytes_per_s": 1557.3970749021105
+        "time_ms": 0.08440640449523926,
+        "gpoints_per_s": 24.845887140214398,
+        "gbytes_per_s": 1590.1367769737215
       },
       "jax": {
         "name": "laplacian_3d_7pt",
         "framework": "JAX",
-        "time_ms": 0.041332095861434937,
-        "gpoints_per_s": 50.739067455728886,
-        "gbytes_per_s": 3247.3003171666487
+        "time_ms": 0.04139682278037071,
+        "gpoints_per_s": 50.659733263259376,
+        "gbytes_per_s": 3242.2229288486
       },
       "handwritten": {
         "name": "laplacian_3d_7pt",
         "framework": "Hand-cuTile",
-        "time_ms": 0.0246726393699646,
-        "gpoints_per_s": 84.99909428226725,
-        "gbytes_per_s": 5439.942034065104
+        "time_ms": 0.02462752103805542,
+        "gpoints_per_s": 85.15481508509922,
+        "gbytes_per_s": 5449.90816544635
       },
       "cuda": {
         "name": "laplacian_3d_7pt",
         "framework": "CUDA-naive",
-        "time_ms": 0.030887999534606934,
-        "gpoints_per_s": 67.8953649183512,
-        "gbytes_per_s": 4345.303354774477
+        "time_ms": 0.030846080780029296,
+        "gpoints_per_s": 67.98763236585184,
+        "gbytes_per_s": 4351.208471414518
       },
       "cuda_smem": {
         "name": "laplacian_3d_7pt",
         "framework": "CUDA-smem",
-        "time_ms": 0.03085184097290039,
-        "gpoints_per_s": 67.97493873516638,
-        "gbytes_per_s": 4350.396079050648
+        "time_ms": 0.030843520164489747,
+        "gpoints_per_s": 67.9932766693232,
+        "gbytes_per_s": 4351.569706836684
       },
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.023758080005645752,
-          "gpoints_per_s": 88.2711060616701,
+          "time_ms": 0.022724480628967286,
+          "gpoints_per_s": 92.28602555284473,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.04539279267191887,
-          "gpoints_per_s": 46.20010967726494,
+          "time_ms": 0.04555899649858475,
+          "gpoints_per_s": 46.03156700488665,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.11821834370493889,
-          "gpoints_per_s": 17.73964965398501,
+          "time_ms": 0.11840460821986198,
+          "gpoints_per_s": 17.71174307764999,
           "num_gpus": 4
         }
       ]
@@ -1587,9 +1587,9 @@
       "npoints": 16777216,
       "cutile": {
         "framework": "cuTile-DSL",
-        "time_ms": 0.2626620864868164,
-        "gpoints_per_s": 63.87376352788581,
-        "gbytes_per_s": 4087.9208657846916,
+        "time_ms": 0.26238847732543946,
+        "gpoints_per_s": 63.94036876547471,
+        "gbytes_per_s": 4092.1836009903814,
         "tile_sizes": [
           4,
           8,
@@ -1600,55 +1600,55 @@
       "cupy": {
         "name": "laplacian_3d_7pt",
         "framework": "CuPy",
-        "time_ms": 1.6859280395507812,
-        "gpoints_per_s": 9.951323903759452,
-        "gbytes_per_s": 636.8847298406049
+        "time_ms": 1.6870140075683593,
+        "gpoints_per_s": 9.944918017712531,
+        "gbytes_per_s": 636.474753133602
       },
       "jax": {
         "name": "laplacian_3d_7pt",
         "framework": "JAX",
-        "time_ms": 0.09604450315237045,
-        "gpoints_per_s": 174.6816886894992,
-        "gbytes_per_s": 11179.628076127949
+        "time_ms": 0.09141210466623306,
+        "gpoints_per_s": 183.5338554041342,
+        "gbytes_per_s": 11746.166745864588
       },
       "handwritten": {
         "name": "laplacian_3d_7pt",
         "framework": "Hand-cuTile",
-        "time_ms": 0.3660908889770508,
-        "gpoints_per_s": 45.82800748437013,
-        "gbytes_per_s": 2932.9924789996885
+        "time_ms": 0.3654604721069336,
+        "gpoints_per_s": 45.90706049077447,
+        "gbytes_per_s": 2938.051871409566
       },
       "cuda": {
         "name": "laplacian_3d_7pt",
         "framework": "CUDA-naive",
-        "time_ms": 0.5427465438842773,
-        "gpoints_per_s": 30.911695687512626,
-        "gbytes_per_s": 1978.348524000808
+        "time_ms": 0.5424652862548828,
+        "gpoints_per_s": 30.92772279647228,
+        "gbytes_per_s": 1979.374258974226
       },
       "cuda_smem": {
         "name": "laplacian_3d_7pt",
         "framework": "CUDA-smem",
-        "time_ms": 0.5426128005981445,
-        "gpoints_per_s": 30.919314806996407,
-        "gbytes_per_s": 1978.83614764777
+        "time_ms": 0.5424889755249024,
+        "gpoints_per_s": 30.926372252572826,
+        "gbytes_per_s": 1979.2878241646608
       },
       "scaling": [
         {
           "framework": "cuTile-1GPU",
-          "time_ms": 0.2626620864868164,
-          "gpoints_per_s": 63.87376352788581,
+          "time_ms": 0.26238847732543946,
+          "gpoints_per_s": 63.94036876547471,
           "num_gpus": 1
         },
         {
           "framework": "cuTile-2GPU",
-          "time_ms": 0.13492684811353683,
-          "gpoints_per_s": 124.3430513242441,
+          "time_ms": 0.1359996199607849,
+          "gpoints_per_s": 123.36222707708787,
           "num_gpus": 2
         },
         {
           "framework": "cuTile-4GPU",
-          "time_ms": 0.13191290199756622,
-          "gpoints_per_s": 127.18404148450571,
+          "time_ms": 0.13138847425580025,
+          "gpoints_per_s": 127.69168753216842,
           "num_gpus": 4
         }
       ]
