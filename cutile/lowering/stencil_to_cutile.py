@@ -254,6 +254,8 @@ def lower_stencil_to_python(
     halo_widths: tuple[int, ...] | None = None,
     temporal_steps: int = 1,
     boundary_spec: dict | None = None,
+    kernel_hints: dict | None = None,
+    spatial_term_order: bool | None = None,
 ) -> str:
     """Lower a Dialect 1 stencil IR module to cuTile Python source code.
 
@@ -319,6 +321,8 @@ def lower_stencil_to_python(
         halo_widths=halo_widths,
         temporal_steps=temporal_steps,
         boundary_spec=boundary_spec,
+        kernel_hints=kernel_hints,
+        spatial_term_order=spatial_term_order,
     )
 
     # ---------------------------------------------------------------- #

@@ -16,6 +16,7 @@ from xdsl.irdl import (
     param_def,
     AnyAttr,
     AnyOf,
+    BaseAttr,
 )
 from xdsl.dialects.builtin import IntAttr, NoneAttr, StringAttr
 
@@ -31,7 +32,7 @@ class LayoutAttr(ParametrizedAttribute):
     name = "layout.type"
 
     kind: StringAttr = param_def(StringAttr)
-    brick_size: IntAttr | NoneAttr = param_def(AnyOf([IntAttr, NoneAttr]))
+    brick_size: IntAttr | NoneAttr = param_def(AnyOf([BaseAttr(IntAttr), BaseAttr(NoneAttr)]))
 
 
 @irdl_op_definition

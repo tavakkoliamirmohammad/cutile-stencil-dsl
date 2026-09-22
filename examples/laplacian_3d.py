@@ -43,15 +43,16 @@ def main():
     print("\n  [OK] Generated code is valid Python syntax")
 
     # -- NumPy reference ----------------------------------------------------
+    # halo_widths is per dimension: the innermost halo is padded so rows are
+    # 128-byte aligned, so build the array shape dimension by dimension.
     halo = result.halo_widths
     N = 16
-    h = halo[0]
-    u = np.zeros((N + 2 * h, N + 2 * h, N + 2 * h))
-    c = N // 2 + h
-    u[c, c, c] = 1.0
+    u = np.zeros(tuple(N + 2 * h for h in halo))
+    c = tuple(N // 2 + h for h in halo)
+    u[c] = 1.0
 
     ref = apply_stencil(u, laplacian_3d._fn, ndim=3, halo_widths=halo)
-    lap_center = ref[c, c, c]
+    lap_center = ref[c]
     print(f"\nNumPy reference: Laplacian at center = {lap_center:.6f}")
     assert abs(lap_center - (-6.0)) < 1e-10, f"Expected -6.0, got {lap_center}"
     print("  [OK] Correctness verified")

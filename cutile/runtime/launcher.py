@@ -13,6 +13,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from xdsl.dialects.stencil import AccessOp as StencilAccessOp
 from xdsl.dialects.stencil import ApplyOp
 
 from cutile.runtime.pipeline import Pipeline
@@ -34,9 +35,24 @@ class CompileResult:
     tile_sizes: tuple[int, ...]
     temporal_steps: int
     analysis: dict = field(default_factory=dict)
+    # Footprint of the stencil itself; ``halo_widths`` may be wider because
+    # the innermost halo is padded so interior rows start 128B-aligned.
+    stencil_halo: tuple[int, ...] = field(default=())
+    # ``@ct.kernel`` keyword arguments the generated kernel was emitted with.
+    kernel_hints: dict = field(default_factory=dict)
+    # Register/stack usage measured for the chosen configuration (wide and
+    # very wide stencils; ``None`` when the probe did not run).
+    resources: Any = field(default=None)
 
-    # -- original function for CPU reference --
+    # Fused kernels: global input names and the member stencils' names, in
+    # launcher argument order (``launch_<name>(*inputs, *outputs)``).
+    inputs: tuple = ()
+    outputs: tuple = ()
+
+    # -- original function(s) for CPU reference --
     _ref_fn: Any = field(default=None, repr=False)
+    _ref_fns: Any = field(default=None, repr=False)
+    _ref_inputs: Any = field(default=None, repr=False)
 
     def emit_to_file(self, path: str) -> None:
         """Write the generated source to *path*."""
@@ -77,6 +93,8 @@ class CompileResult:
 
         from cutile.reference.stencil_ref import apply_stencil
 
+        if self._ref_fns:
+            return self._validate_fused(atol)
         if self._ref_fn is None:
             raise RuntimeError(
                 "No reference function available -- pass a @stencil-decorated "
@@ -111,6 +129,36 @@ class CompileResult:
         max_diff = float(np.max(np.abs(ref_out[interior] - gpu_out[interior])))
         ok = np.allclose(ref_out[interior], gpu_out[interior], atol=atol)
         print(f"Validation: max_diff={max_diff:.2e}, pass={ok}")
+        return ok
+
+    def _validate_fused(self, atol: float) -> bool:
+        """Run the fused kernel once and compare every output with its
+        member stencil evaluated by the NumPy reference on the same inputs."""
+        import cupy as cp
+        import numpy as np
+
+        from cutile.reference.elementwise import array_aware
+        from cutile.reference.stencil_ref import _ArrayProxy
+
+        hw = self.halo_widths
+        base = 128 if self.ndim == 1 else 64
+        shape = tuple(base + 2 * h for h in hw)
+        inputs = {name: np.random.rand(*shape) for name in self.inputs}
+        mod = self.load_module()
+        launcher = getattr(mod, f"launch_{self.name}")
+        gpu_in = [cp.asarray(inputs[n]) for n in self.inputs]
+        gpu_out = [cp.zeros(shape) for _ in self.outputs]
+        launcher(*gpu_in, *gpu_out)
+        cp.cuda.Device().synchronize()
+        interior = tuple(slice(h, s - h) for h, s in zip(hw, shape))
+        ok = True
+        for fn, names, out in zip(self._ref_fns, self._ref_inputs, gpu_out):
+            ref = array_aware(fn)(*[_ArrayProxy(inputs[n], hw) for n in names], *([0] * self.ndim))
+            got = cp.asnumpy(out)[interior]
+            max_diff = float(np.max(np.abs(ref - got)))
+            good = bool(np.allclose(ref, got, atol=atol))
+            print(f"Validation[{fn.__name__}]: max_diff={max_diff:.2e}, pass={good}")
+            ok = ok and good
         return ok
 
     def benchmark(
@@ -181,6 +229,78 @@ class CompileResult:
 # ---------------------------------------------------------------------- #
 
 
+def _num_inputs(ir) -> int:
+    """Number of input arrays of the stencil (block arguments of its FuncOp)."""
+    from cutile.dialects.cutile_stencil.dialect import FuncOp
+
+    for op in ir.body.ops:
+        if isinstance(op, FuncOp):
+            return len(list(op.body.blocks)[0].args)
+    return 1
+
+
+def pad_inner_halo(
+    halo_widths: tuple[int, ...], dtype_bytes: int, align_bytes: int = 128
+) -> tuple[int, ...]:
+    """Round the innermost halo up so the interior starts on an aligned row.
+
+    With an unpadded halo of 1 element every interior row begins 8 bytes
+    into a cache line, which costs a few percent of memory bandwidth on the
+    row-shaped tiles the compiler emits.  Padding the innermost halo to a
+    multiple of ``align_bytes`` (16 float64 or 32 float32 elements) fixes
+    that; the outer halos are left alone because they do not affect
+    alignment.
+    """
+    if not halo_widths:
+        return halo_widths
+    align = max(1, align_bytes // dtype_bytes)
+    inner = -(-halo_widths[-1] // align) * align  # ceil to multiple
+    return tuple(halo_widths[:-1]) + (inner,)
+
+
+def _budgeted_configs(tiling, candidates):
+    """Wrap the tiling pass's ``(tile, hints)`` candidates as
+    ``regcheck.Config`` with the register budget of each one's occupancy
+    hint (unhinted candidates get the pass's occupancy target)."""
+    from cutile.runtime import regcheck
+
+    return [
+        regcheck.Config(
+            tuple(tile), dict(hints),
+            max_registers=regcheck.register_budget(hints.get("occupancy", tiling.very_wide_occupancy)),
+        )
+        for tile, hints in candidates
+    ]
+
+
+def _choose_config(
+    candidates, lower, *, kernel_name, ndim, num_inputs, halo_widths, dtype,
+    max_registers=None, num_outputs=1,
+):
+    """Probe *candidates* (``regcheck.Config``) in order and return
+    ``(tile_sizes, kernel_hints, resources)`` of the first that fits.
+
+    *lower* turns a configuration into generated source; the probe compiles
+    it the way cuTile will and reads register and stack usage from the cubin.
+    """
+    from cutile.runtime import regcheck
+
+    probed: dict = {}
+
+    def _probe(cfg):
+        code = lower(cfg)
+        res = regcheck.probe_resources(
+            code=code, kernel_name=kernel_name, ndim=ndim, num_inputs=num_inputs,
+            num_outputs=num_outputs, has_consts=("consts," in code),
+            tile_sizes=cfg.tile_sizes, halo_widths=halo_widths, dtype=dtype,
+        )
+        probed[id(cfg)] = res
+        return res
+
+    chosen = regcheck.select_config(candidates, _probe, max_registers=max_registers)
+    return chosen.tile_sizes, dict(chosen.kernel_hints), probed.get(id(chosen))
+
+
 def compile(
     stencil_fn,
     domain: tuple[int, ...] | None = None,
@@ -193,6 +313,8 @@ def compile(
     overlap: bool = True,
     layout: str | None = None,
     brick_size: int = 32,
+    align_halo: bool = True,
+    occupancy: int | None = None,
 ) -> CompileResult:
     """Compile a ``@stencil``-decorated function through the pipeline.
 
@@ -224,6 +346,14 @@ def compile(
         flat-to-brick conversion.
     brick_size
         Brick side length when ``layout="bricked"`` (default ``32``).
+    align_halo
+        Pad the innermost halo to a 128-byte multiple so interior rows are
+        aligned (default ``True``; single-GPU flat layout only).  The
+        unpadded footprint stays available as ``CompileResult.stencil_halo``.
+    occupancy
+        cuTile ``@ct.kernel(occupancy=...)`` hint: expected resident blocks per
+        SM, which bounds the compiler's register budget.  ``None`` lets the
+        tiling pass decide (it sets a hint for wide stencils).
 
     Returns
     -------
@@ -232,19 +362,19 @@ def compile(
     ir = stencil_fn._ir
     name = stencil_fn._fn.__name__
 
+    dtype_bytes = 4 if getattr(stencil_fn, "_dtype", "float64") in (
+        "float32", "fp32"
+    ) else 8
+    if hw is not None:
+        dtype_bytes = hw.dtype_bytes
+
     # -------------------------------------------------------------- #
     # 1. Run the analysis pipeline on a clone
     # -------------------------------------------------------------- #
     analysis_clone = ir.clone()
 
     if pipeline is None:
-        shared_mem = 49152
-        dtype_bytes = 4 if getattr(stencil_fn, "_dtype", "float64") in (
-            "float32", "fp32"
-        ) else 8
-        if hw is not None:
-            shared_mem = hw.shared_mem_bytes
-            dtype_bytes = hw.dtype_bytes
+        shared_mem = 49152 if hw is None else hw.shared_mem_bytes
         max_ts = 8 if temporal_blocking else 1
         pipeline = Pipeline.single_gpu(
             shared_mem_bytes=shared_mem,
@@ -261,6 +391,10 @@ def compile(
     tile_sizes: tuple[int, ...] = (256,)
     temporal_steps: int = 1
     analysis: dict = {}
+    kernel_hints: dict = {}
+    pass_occupancy: int | None = None
+    num_loads: int = 0
+    num_inputs = _num_inputs(ir)
 
     for op in analysis_clone.walk():
         if isinstance(op, ApplyOp):
@@ -274,6 +408,11 @@ def compile(
                 )
             if "temporal_steps" in op.attributes:
                 temporal_steps = op.attributes["temporal_steps"].data
+            if "occupancy" in op.attributes:
+                kernel_hints["occupancy"] = op.attributes["occupancy"].data
+                pass_occupancy = op.attributes["occupancy"].data
+            from cutile.passes.tiling import unique_access_count
+            num_loads = unique_access_count(op)
 
             # Gather roofline analysis
             for key in (
@@ -300,6 +439,13 @@ def compile(
         temporal_steps = 1
 
     # -------------------------------------------------------------- #
+    # 2b. Pad the innermost halo so interior rows start 128B-aligned
+    # -------------------------------------------------------------- #
+    stencil_halo = halo_widths
+    if align_halo and num_gpus == 1 and layout != "bricked":
+        halo_widths = pad_inner_halo(halo_widths, dtype_bytes)
+
+    # -------------------------------------------------------------- #
     # 3. Optionally autotune
     # -------------------------------------------------------------- #
     if autotune and domain is not None:
@@ -307,6 +453,44 @@ def compile(
         result = _autotune(stencil_fn, domain, hw=hw)
         tile_sizes = result.tile_sizes
         temporal_steps = result.temporal_steps
+        kernel_hints = dict(getattr(result, "kernel_hints", {}) or {})
+
+    # An explicit occupancy request wins over both the pass and the autotuner.
+    if occupancy is not None:
+        kernel_hints["occupancy"] = occupancy
+
+    # -------------------------------------------------------------- #
+    # 3b. Wide and very wide stencils: the pass ranks (tile, hints)
+    #     configurations; keep the first whose compiled kernel neither
+    #     spills nor exceeds the register budget of the occupancy target.
+    #     Decided from the cubin, not from the stencil's shape.
+    # -------------------------------------------------------------- #
+    resources = None
+    # Policy decisions live here; the lowering only consumes them.
+    from cutile.passes.tiling import TilingPass as _Tiling
+    tiling = next((p for p in pipeline.passes if isinstance(p, _Tiling)), _Tiling())
+    spatial_term_order = num_loads > tiling.very_wide_stencil_loads
+    candidates = tiling.candidates(len(halo_widths), num_loads)
+    probe_wanted = (
+        len(candidates) > 1 and occupancy is None
+        and not (autotune and domain is not None)
+        and num_gpus == 1 and layout != "bricked"
+    )
+    if probe_wanted:
+        from cutile.lowering.stencil_to_cutile import lower_stencil_to_python
+        from cutile.runtime import regcheck
+
+        def _lower(cfg):
+            return lower_stencil_to_python(
+                ir.clone(), tile_sizes=cfg.tile_sizes, halo_widths=halo_widths,
+                kernel_hints=cfg.kernel_hints, spatial_term_order=spatial_term_order,
+            )
+
+        tile_sizes, kernel_hints, resources = _choose_config(
+            _budgeted_configs(tiling, candidates), _lower,
+            kernel_name=f"{name}_kernel", ndim=len(halo_widths), num_inputs=num_inputs,
+            halo_widths=halo_widths, dtype=getattr(stencil_fn, "_dtype", "float64"),
+        )
 
     # -------------------------------------------------------------- #
     # 4. Lower to Python source using the *original* Dialect 1 IR
@@ -351,6 +535,8 @@ def compile(
             halo_widths=halo_widths,
             temporal_steps=temporal_steps,
             boundary_spec=boundary_spec,
+            kernel_hints=kernel_hints,
+            spatial_term_order=spatial_term_order,
         )
 
     return CompileResult(
@@ -361,6 +547,9 @@ def compile(
         tile_sizes=tile_sizes,
         temporal_steps=temporal_steps,
         analysis=analysis,
+        stencil_halo=stencil_halo,
+        kernel_hints=kernel_hints,
+        resources=resources,
         _ref_fn=stencil_fn._fn,
     )
 
@@ -377,89 +566,111 @@ def compile_fused(
     tile_sizes: tuple[int, ...] | None = None,
     halo_widths: tuple[int, ...] | None = None,
     temporal_steps: int = 1,
+    occupancy: int | None = None,
+    align_halo: bool = True,
 ) -> CompileResult:
-    """Compile multiple stencils into a single fused kernel.
+    """Compile several stencils over one domain into a single fused kernel.
 
-    Multi-field stencils that read overlapping inputs are compiled into one
-    kernel that loads shared data once and computes all outputs.
+    The kernel loads each distinct (field, offset) once and computes every
+    output; inputs are matched by parameter name, so the launcher takes the
+    union of the stencils' arrays followed by one output per stencil
+    (``launch_<name>(*result.inputs, *outs)``).  Tile shape and kernel hints
+    are chosen exactly as for a single stencil, from the merged access count
+    and the compiled kernel's register usage.
 
     Parameters
     ----------
     stencil_fns : list
-        List of ``@stencil``-decorated functions (must have ``_ir`` attributes).
+        ``@stencil``-decorated functions with distinct names and equal ndim.
     domain : tuple[int, ...] | None
-        Optional domain shape.
+        Accepted for API compatibility; unused.
     hw
-        Optional hardware spec.
-    tile_sizes : tuple[int, ...] | None
-        Tile sizes per dimension.
-    halo_widths : tuple[int, ...] | None
-        Halo widths per dimension.
+        Optional :class:`~cutile.config.HardwareSpec`.
+    tile_sizes, halo_widths : tuple[int, ...] | None
+        Override the tile shape / footprint (the footprint defaults to the
+        widest member's, innermost padded for alignment).
     temporal_steps : int
-        Number of temporal blocking steps (1 = no temporal blocking).
-
-    Returns
-    -------
-    CompileResult
+        Must be 1; temporal blocking is not available for fused kernels.
+    occupancy : int | None
+        Explicit ``@ct.kernel(occupancy=...)`` hint; disables probing.
+    align_halo : bool
+        Pad the innermost halo to a 128-byte multiple (default ``True``).
     """
     if not stencil_fns:
         raise ValueError("At least one stencil function is required")
+    if temporal_steps != 1:
+        raise NotImplementedError(
+            "temporal blocking of fused kernels is not supported (temporal_steps must be 1)"
+        )
 
     from cutile.lowering.fusion_emitter import lower_fused_stencils_to_python
+    from cutile.lowering.stencil_to_target import extract_fused_meta
+    from cutile.passes.tiling import TilingPass
+    from cutile.runtime import regcheck
 
     modules = [fn._ir for fn in stencil_fns]
-    names = [fn._fn.__name__ for fn in stencil_fns]
+    meta = extract_fused_meta(modules)
+    ndim = meta.ndim
+    dtype = getattr(stencil_fns[0], "_dtype", "float64")
+    dtype_bytes = 4 if dtype in ("float32", "fp32") else 8
+    shared_mem = 49152
+    if hw is not None:
+        shared_mem, dtype_bytes = hw.shared_mem_bytes, hw.dtype_bytes
 
-    # Determine halo widths from pipeline analysis if not provided
-    if halo_widths is None or tile_sizes is None:
-        analysis_clone = modules[0].clone()
-        first_fn = stencil_fns[0]
-        shared_mem = 49152
-        dtype_bytes = 4 if getattr(first_fn, "_dtype", "float64") in (
-            "float32", "fp32"
-        ) else 8
-        if hw is not None:
-            shared_mem = hw.shared_mem_bytes
-            dtype_bytes = hw.dtype_bytes
-        p = Pipeline.single_gpu(
-            shared_mem_bytes=shared_mem,
-            dtype_bytes=dtype_bytes,
-            max_temporal_steps=1,
+    # Footprint: the widest halo any member needs, per dimension.
+    if halo_widths is None:
+        per_stencil = []
+        for module in modules:
+            clone = module.clone()
+            Pipeline.single_gpu(
+                shared_mem_bytes=shared_mem, dtype_bytes=dtype_bytes, max_temporal_steps=1
+            ).run(clone)
+            for op in clone.walk():
+                if isinstance(op, ApplyOp) and "halo_widths" in op.attributes:
+                    per_stencil.append(tuple(a.data for a in op.attributes["halo_widths"]))
+                    break
+        halo_widths = tuple(max(hs) for hs in zip(*per_stencil)) if per_stencil else (1,) * ndim
+    stencil_halo = tuple(halo_widths)
+    if align_halo:
+        halo_widths = pad_inner_halo(tuple(halo_widths), dtype_bytes)
+
+    num_loads = len(meta.accesses)
+    tiling = TilingPass()
+    spatial_term_order = num_loads > tiling.very_wide_stencil_loads
+    candidates = [(tuple(tile_sizes), {})] if tile_sizes is not None else tiling.candidates(ndim, num_loads)
+    if occupancy is not None:
+        candidates = [(candidates[0][0], {"occupancy": occupancy})]
+
+    def _lower(cfg):
+        return lower_fused_stencils_to_python(
+            modules, tile_sizes=cfg.tile_sizes, halo_widths=halo_widths,
+            kernel_hints=cfg.kernel_hints, spatial_term_order=spatial_term_order,
         )
-        p.run(analysis_clone)
-        for op in analysis_clone.walk():
-            if isinstance(op, ApplyOp):
-                if halo_widths is None and "halo_widths" in op.attributes:
-                    halo_widths = tuple(
-                        a.data for a in op.attributes["halo_widths"]
-                    )
-                if tile_sizes is None and "tile_sizes" in op.attributes:
-                    tile_sizes = tuple(
-                        a.data for a in op.attributes["tile_sizes"]
-                    )
-                break
 
-    code = lower_fused_stencils_to_python(
-        modules,
-        tile_sizes=tile_sizes,
-        halo_widths=halo_widths,
-        temporal_steps=temporal_steps,
-    )
-
-    # Build a fused name
-    if len(names) <= 3:
-        fused_name = "_".join(names) + "_fused"
+    resources = None
+    if len(candidates) > 1:
+        tile_sizes, kernel_hints, resources = _choose_config(
+            _budgeted_configs(tiling, candidates), _lower,
+            kernel_name=f"{meta.name}_kernel", ndim=ndim, num_inputs=len(meta.input_names),
+            num_outputs=len(meta.output_names), halo_widths=halo_widths, dtype=dtype,
+        )
     else:
-        fused_name = f"{names[0]}_and_{len(names) - 1}_others_fused"
+        tile_sizes, kernel_hints = tuple(candidates[0][0]), dict(candidates[0][1])
 
-    ndim = stencil_fns[0]._ndim or len(halo_widths or (1,))
-
+    code = _lower(regcheck.Config(tuple(tile_sizes), dict(kernel_hints)))
     return CompileResult(
-        name=fused_name,
+        name=meta.name,
         code=code,
         ndim=ndim,
-        halo_widths=halo_widths or (1,) * ndim,
-        tile_sizes=tile_sizes or (64,) * ndim,
-        temporal_steps=temporal_steps,
-        analysis={},
+        halo_widths=tuple(halo_widths),
+        tile_sizes=tuple(tile_sizes),
+        temporal_steps=1,
+        analysis={"unique_loads": num_loads},
+        stencil_halo=stencil_halo,
+        kernel_hints=kernel_hints,
+        resources=resources,
+        inputs=tuple(meta.input_names),
+        outputs=tuple(meta.output_names),
+        _ref_fns=[fn._fn for fn in stencil_fns],
+        _ref_inputs=meta.stencil_inputs,
     )
