@@ -326,6 +326,32 @@ in cuTile: each extra tile load costs about as much as the DRAM traffic it
 saves. `temporal_steps > 1` therefore stays a sequence of launches, through
 cached scratch buffers so a call does not allocate.
 
+### Who does what: bricklib, this compiler, cuTile, the user
+
+| Optimization | bricklib | This DSL | Done by (DSL side) |
+|---|---|---|---|
+| Data layout | 8^3 bricks with an adjacency list; brick-contiguous storage | Dense row-major arrays with a padded halo (`layout="bricked"` exists but is not the tuned path) | User allocates with `result.halo_widths` |
+| Footprint / halo analysis | Manual ghost zone (`GZ`) in the driver | Per-dimension halo from the access offsets | Our IR (`AnalysisPass`) |
+| Vectorized, coalesced 128-bit loads and stores | From brick alignment, in generated CUDA | `LDG.E.128`/`STG.E.128` on every aligned view | cuTile compiler emits them; our lowering makes views aligned (row tiles, 128-byte inner halo) |
+| Register reuse of neighbors (load each element once, shuffle) | Vector-scatter code generator | Not expressible: a shifted tile view is a new load. Replaced by load minimization: one load per distinct (field, offset), single-use loads inline, shared loads in fused kernels | Our IR/emitter; the per-thread lowering belongs to cuTile |
+| Tile / thread-block shape | Fixed 8^3 brick, 32 threads (4x8 fold), chosen by the user | Row tiles sized by elements per thread, tier by access count, candidate ladder | Our pass (`TilingPass`) + runtime selection; cuTile fixes 128 threads per tile |
+| Register pressure / occupancy | nvcc register allocation | `@ct.kernel(occupancy=N)` chosen by compiling each candidate and reading its cubin (very wide: timing it) | Knob is cuTile's; the choice is our runtime (`regcheck`) |
+| Instruction scheduling, unrolling, FMA contraction | nvcc | Every term becomes one `DFMA` | cuTile compiler (tileiras + libnvvm + ptxas) |
+| Bounds checks | None (fixed grid, full bricks) | Predicated loads/stores on every view (~1.6x instructions per element, the source of the star-stencil gap) | cuTile compiler; not removable from Tile IR on 13.2 |
+| Block traversal order | Brick order | `bid(0)` walks rows of a plane (rows-fastest) | Our IR (`grid_order`) |
+| Coefficients | C macros / `ConstRef` literals | Constant folding in float64; inexact constants through a device array because cuTile rounds Python scalars to float32 | Our emitter |
+| Term order | Codegen DAG (by offset) | Very wide sums re-associated into spatial (x, y, z) order | Our emitter |
+| Multi-output fusion | Hand-written kernel only (its generator folds all outputs into one accumulator) | `compile_fused()`: inputs merged by name, one load per distinct access, one constants table | Our IR; which stencils to fuse is the user's call |
+| Temporal blocking | None (one sweep per launch) | Measured, does not pay in cuTile; `temporal_steps > 1` is a sequence of launches with cached buffers | Our runtime |
+| Shared memory / TMA staging | None (registers + shuffles) | None; cuTile never emits smem or TMA for these kernels | cuTile compiler |
+| Autotuning | None (user picks brick and fold dims) | Optional `compile(autotune=True, domain=...)`; fusion grouping; `select`, `occupancy`, `align_halo` overrides | User |
+| Validation | Driver compares against a CPU loop | `result.validate()` against the NumPy reference for any number of inputs/outputs | Our runtime |
+| Multi-node communication | MPI ghost exchange (papers) | Multi-GPU emitter (`num_gpus`), not benchmarked here | Our IR |
+
+For a new stencil everything in the "Our IR / runtime" rows is automatic;
+the user supplies the expression, allocates arrays with the padded halo,
+and may choose fusion groups and autotuning.
+
 ### Robustness: any expression, not just the paper stencils
 
 Code generation is exercised with random expressions, not only the
