@@ -73,9 +73,11 @@ def apply_stencil(
     np.ndarray
         Copy of *u* with only the interior cells updated.
     """
+    from cutile.reference.elementwise import array_aware
+
     proxy = _ArrayProxy(u, halo_widths)
     idx_args = [0] * ndim
-    result = fn(proxy, *idx_args)
+    result = array_aware(fn)(proxy, *idx_args)
 
     out = u.copy()
     interior = tuple(
