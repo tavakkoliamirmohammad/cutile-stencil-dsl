@@ -352,6 +352,44 @@ For a new stencil everything in the "Our IR / runtime" rows is automatic;
 the user supplies the expression, allocates arrays with the padded halo,
 and may choose fusion groups and autotuning.
 
+### Brick-style register reuse: what Tile IR can and cannot express
+
+bricklib's central idea is to load a brick and its halo once and derive
+every shifted neighbor from registers (warp shuffles), so a 27-point stencil
+costs about two loaded elements per output instead of 27. Tile IR offers
+`ct.extract` (aligned sub-tiles only), `ct.cat` (two equal-shape tiles) and
+no shift, roll or lane-shuffle operation, so:
+
+* along the contiguous dimension a shift by one element is not expressible
+  at all: every `k +- 1` neighbor must be its own load;
+* along the row and plane dimensions it is expressible as one tall load per
+  (x, z) offset pair, rows taken with aligned `extract`, output rows
+  reassembled with a `cat` tree. That cuts the 27-point kernel from 27 to 9
+  loads per tile (18 loaded elements per output instead of 27) and the
+  125-point kernel from 125 to 25.
+
+Measured (same GPU, 256^3 float64, best of several tile shapes and
+occupancy hints per kernel; `LDS/STS` are shared-memory instructions in the
+SASS, `elem` is loaded elements per output):
+
+| kernel | emitter | elem | ms | notes |
+|---|---|---|---|---|
+| 7-point | shifted loads (default) | 7 | 0.50 | |
+| 7-point | row fold, TY=2, TZ=256 | 10 | 0.50 | 14 LDS/STS |
+| 27-point | shifted loads (default) | 27 | 1.41 | |
+| 27-point | row fold, TY=2, TZ=128 | 18 | 1.39 | 30 LDS/STS, 108 registers |
+| 27-point | row fold, TY=4 or 8 | 18 | 2.9 to 4.8 | 76-123 LDS/STS |
+| 125-point | shifted loads (default) | 125 | 6.3 to 6.7 | |
+| 125-point | row fold, TY=4, TZ=128 | 50 | 9.1 | 130 LDS/STS, 1 KB spill per thread |
+
+tileiras implements the row re-layout that `extract` and `cat` imply as a
+shared-memory round trip, which costs about what the saved L1 loads cost,
+and the tall tiles it keeps live push wide kernels into spills. The fold
+ties the default on the 7- and 27-point kernels and loses badly on the
+125-point one, so the emitter keeps one load per distinct access. The
+remaining lever is inside cuTile: a lane-shuffle or shifted-view primitive
+would let the compiler do what bricklib's generator does by hand.
+
 ### Robustness: any expression, not just the paper stencils
 
 Code generation is exercised with random expressions, not only the
