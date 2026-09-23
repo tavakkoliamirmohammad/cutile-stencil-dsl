@@ -273,8 +273,30 @@ def _fold(op, a: float, b: float) -> float | None:
     return None
 
 
+def _top_level_ops(expr: str) -> set[str]:
+    """Binary operators at parenthesis depth 0 of an emitted expression.
+
+    Binary operators are emitted as ``" op "``; a ``-`` without surrounding
+    spaces is a unary minus or a negative literal and does not count.
+    """
+    found: set[str] = set()
+    depth = 0
+    for k, ch in enumerate(expr):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif depth == 0 and ch in "+-*/" and expr[k - 1:k] == " " and expr[k + 1:k + 2] == " ":
+            found.add(ch)
+    return found
+
+
 def _needs_parens(expr: str, ops: tuple[str, ...]) -> bool:
-    return any(c in expr for c in ops) and not expr.startswith("(")
+    """Whether *expr*, used as an operand next to one of *ops*, must be
+    wrapped: true when it has a lower-precedence operator at its top level.
+    (A string that merely starts with ``(`` is not already parenthesized:
+    ``(-0.125) * x - y`` needs wrapping under a ``*``.)"""
+    return bool(_top_level_ops(expr) & set(ops))
 
 
 # arith.cmpf predicate (integer encoding, ordered comparisons) -> Python operator

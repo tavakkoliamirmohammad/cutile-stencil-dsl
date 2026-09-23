@@ -172,15 +172,21 @@ copy of the 7-point arrays takes 0.495 ms.
 
 | stencil | DSL (tile, hint) | bricklib Arr | bricklib Trans | DSL / Arr | DSL / Trans |
 |---|---|---|---|---|---|
-| 7-point star | 0.499 ms (1,1,256) | 0.509 | 0.544 | 0.98 | 0.92 |
-| 13-point star | 0.775 ms (1,1,256) | 0.711 | 0.879 | 1.09 | 0.88 |
-| 19-point star | 1.077 ms (1,2,64) | 1.002 | 1.219 | 1.07 | 0.88 |
-| 25-point star | 1.374 ms (1,2,64) | 1.319 | 1.554 | 1.04 | 0.88 |
-| 27-point box | 1.413 ms (1,2,64) | 1.429 | 1.711 | 0.99 | 0.83 |
-| 125-point box | 6.667 ms (1,1,256), occupancy=4 | 6.223 | 7.477 | 1.07 | 0.89 |
-| iso3dfd, 3 grids | 1.661 ms (1,2,64) | 1.709 | 1.814 | 0.97 | 0.92 |
+| 7-point star | 0.506 ms (1,1,256) | 0.509 | 0.555 | 0.99 | 0.91 |
+| 13-point star | 0.795 ms (1,1,256) | 0.720 | 0.890 | 1.10 | 0.89 |
+| 19-point star | 1.104 ms (1,2,64) | 1.015 | 1.234 | 1.09 | 0.89 |
+| 25-point star | 1.405 ms (1,2,64) | 1.336 | 1.575 | 1.05 | 0.89 |
+| 27-point box | 1.431 ms (1,2,64) | 1.418 | 1.628 | 1.01 | 0.88 |
+| 125-point box | 6.696 ms (1,2,64), occupancy=4 | 5.939 | 6.888 | 1.13 | 0.97 |
+| iso3dfd, 3 grids | 1.685 ms (1,2,64) | 1.683 | 1.726 | 1.00 | 0.98 |
 | cond (max/abs) | 0.896 ms (1,1,256) | 0.938 | 0.921 | 0.96 | 0.97 |
-| CNS hypterm, 8 in / 5 out, one fused kernel | 16.991 ms (1,2,64), occupancy=3 | 17.360 | 17.347 (5 kernels) | 0.98 | 0.98 |
+| CNS hypterm, 8 in / 5 out, one fused kernel | 17.10 ms (1,2,64), occupancy=4 | 17.24 | 17.21 (5 kernels) | 0.99 | 0.99 |
+
+Run-to-run drift on this power-limited GPU is 3 to 5 percent for both
+frameworks (the 125-point hand-written kernel measured 5.94 and 6.22 ms in
+two runs of the same binary), so ratios within that band are ties. The CNS
+row is the mean of three rounds alternating both frameworks (DSL 16.9 to
+17.2 ms, bricklib 16.9 to 17.5 ms).
 
 This is the benchmark set of the Bricks papers (P3HPC'18 Table I, SC'23
 Table 2): star Laplacians of order 2 to 8, compact Laplacians of order 2 and
@@ -197,9 +203,10 @@ to all five outputs (values verified identical across outputs), so it
 cannot produce a valid fused kernel. The DSL row is `compile_fused()`: one
 kernel with 144 distinct loads and five stores.
 
-The generated kernels beat bricklib's code generator on every stencil, match
-or beat its hand-written kernel on the 7-point, 27-point, iso, cond and CNS
-kernels, and are within 5-9% of it on the 13/19/25/125-point ones (a
+The generated kernels beat bricklib's code generator on every stencil except
+CNS, where the fused kernel ties both bricklib variants within drift; they
+match or beat its hand-written kernel on the 7-point, 27-point, iso and cond
+kernels and are within 5-13% of it on the 13/19/25/125-point ones (a
 power-limit effect: the DSL kernels execute ~1.6x more instructions per
 element for bounds checks and address arithmetic, which pins the 145 W cap
 and lowers the clock to 1770 MHz against bricklib's 2200-2430 MHz; under
@@ -231,13 +238,21 @@ and the front end can override each. The decisions, in order of impact:
   interior extent. Row tiles alone are a 3.3x speedup over the previous
   `(4, 8, 8)` default; the per-thread rule avoids a 1.6x loss on 27-point
   and a 5x loss on 125-point stencils.
-* **Register budget decides, the access count only ranks.** The pass returns
-  its tier's configurations in order of preference (`TilingPass.candidates`:
-  wide stencils try one element per thread unhinted first, then the hinted
-  ladder; very wide ones the ladder first and unhinted last), and
-  `compile()` keeps the first whose compiled kernel neither spills nor
-  exceeds the register budget of its occupancy target (128 registers for
-  four 128-thread blocks per SM, 170 for three, 256 for two).
+* **The access count only ranks candidates; the compiled kernel decides.**
+  The pass returns its tier's configurations in order of preference
+  (`TilingPass.candidates`: wide stencils try one element per thread
+  unhinted first, then the hinted ladder; very wide ones the ladder first
+  and unhinted last). For wide stencils (17 to 64 accesses) `compile()`
+  keeps the first whose compiled kernel neither spills nor exceeds the
+  register budget of its occupancy target (128 registers for four
+  128-thread blocks per SM, 170 for three). For very wide stencils the best
+  configuration is not predictable from registers alone (a 112-load product
+  kernel runs 15.0 ms as a single 128-row at occupancy 3, 15.8 ms as two
+  rows at occupancy 4 with a 144-byte spill, and 20.3 ms at the first
+  spill-free rung), so `compile()` compiles every candidate, times it on a
+  slab of 32x64x256 points and keeps the fastest one without a large spill,
+  preferring the earlier candidate within 3%. `compile(..., select="probe")`
+  or `"measure"` forces either mode.
   The count alone is not enough: the CNS momentum stencils have 56 accesses
   made of two-field products and compile to 210 spill-free registers at one
   element per thread, two blocks per SM and 5.2 ms, where the hinted tile
@@ -258,13 +273,14 @@ and the front end can override each. The decisions, in order of impact:
   128-wide row it spills badly (28.8 ms), and larger tiles are 10x to 20x
   slower. Whether a given kernel fits a budget is only known after compiling
   it (an 81-point 2D box spills under `occupancy=8` and runs 7x slower), so
-  the pass ranks a ladder of candidates, the hinted two-element tile, then
-  the one-element tile at occupancy 4, 3 and 2, and `compile()` compiles
-  each exactly as cuTile will at launch, reads its register and stack usage
-  with `cuobjdump`, and moves on if it spills or exceeds the budget of its
-  own occupancy target (`cutile/runtime/regcheck.py`; the result is on
-  `CompileResult.resources`). `compile(..., occupancy=N)` overrides, and the
-  autotuner tries the hinted variant of every two-element tile.
+  the pass ranks a ladder of candidates, the hinted two-element tile, the
+  one-element two-row tile at occupancy 4 and 3, and the one-element single
+  row at occupancy 3, and `compile()` compiles each exactly as cuTile will
+  at launch and reads its register and stack usage with `cuobjdump`
+  (`cutile/runtime/regcheck.py`; the result, including the measured slab
+  time when the kernel was timed, is on `CompileResult.resources`).
+  `compile(..., occupancy=N)` overrides, and the autotuner tries the hinted
+  variant of every two-element tile.
 * **Spatial term order for very wide sums.** tileiras issues loads in program
   order, and for the 125-point box that order decides the schedule: terms
   sorted by access offset run in 6.5 ms, the source order grouped by
@@ -297,17 +313,68 @@ and the front end can override each. The decisions, in order of impact:
   output per stencil (`launch_<name>(*result.inputs, *outs)`), and
   `CompileResult.validate()` checks every output against its member's NumPy
   reference. CNS as five separate kernels reads 264 tiles per point and
-  takes 17.4 ms; the fused kernel reads 144, compiles to 164 registers
-  without spills under the `occupancy=3` rung of the ladder and takes
-  17.0 ms (the table's row). Fusion is also a knob the front end can turn:
-  grouping the members by hand into two kernels of 96 loads each
-  (`compile_fused([rho, mx, my])` and `compile_fused([mz, ene])`) runs in
-  16.4 ms, 6% ahead of bricklib's hand-written kernel.
+  takes 17.4 ms; the fused kernel reads 144 and takes 17.1 ms (the table's
+  row; the measured selection picks two rows of 64 at `occupancy=4`, 128
+  registers with a 192-byte spill, over the spill-free `occupancy=3` rung).
+  Fusion is also a knob the front end can turn: grouping the members by hand
+  into two kernels of 96 loads each (`compile_fused([rho, mx, my])` and
+  `compile_fused([mz, ene])`) measured 16.4 to 17.8 ms across rounds, so
+  it is within drift of the single kernel here.
 
 Fusing several time steps into one kernel was measured and does not pay off
 in cuTile: each extra tile load costs about as much as the DRAM traffic it
 saves. `temporal_steps > 1` therefore stays a sequence of launches, through
 cached scratch buffers so a call does not allocate.
+
+### Robustness: any expression, not just the paper stencils
+
+Code generation is exercised with random expressions, not only the
+benchmark set. A generator (`tests/random_stencils.py`) draws stencils over
+one to four fields in one to three dimensions with radius up to 4: linear
+terms, products of two fields, divisions, `max`/`min`/`abs`, `where` on a
+comparison, nested parentheses, negations, and a mix of float32-exact,
+inexact and integer constants, in float64 and float32, with and without
+temporal blocking. Two checks run on every case:
+
+* `tests/test_random_expressions.py` reads the emitted kernel expression back
+  with NumPy (each `ct.load` becomes the shifted interior of its input, each
+  `_c<k>` its constant) and requires it to reproduce the Python source bit
+  for bit on 40 seeds, and validates eight seeds on the GPU against the
+  reference;
+* a longer campaign in the same style (140 cases, 3 to 40 terms each, all
+  tile tiers and occupancy rungs exercised) compiles, launches and validates
+  every case end to end.
+
+The campaign found one code generation bug, since fixed and pinned by
+`tests/test_expr_precedence.py`: the parenthesization check treated any
+operand string that starts with `(` as already parenthesized, so
+`c * (-0.125 * abs(x) - y)` was emitted as `c * (-0.125) * abs(x) - y`. It
+also found that `CompileResult.validate()` only handled single-input
+stencils; it now validates any number of inputs and outputs, passing a
+stencil's unread parameters as zero arrays.
+
+Eight of the generated 3D expressions (12 to 60 terms, one to four fields,
+radius 1 to 4) were also put through bricklib from the same AST: a
+vector-scatter codegen script per case and a hand-written CUDA kernel with a
+CPU reference, both validated by bricklib's own compare. Same session,
+256^3 float64, ms per sweep, DSL defaults with no per-case tuning:
+
+| case | fields | radius | terms | distinct loads | DSL (tile, hint) | bricklib Arr | bricklib Trans | DSL / Arr | DSL / Trans |
+|---|---|---|---|---|---|---|---|---|---|
+| rnd0 | 1 | 1 | 12 | 15 | 1.831 ms (1,1,256) | 1.841 | 2.040 | 0.99 | 0.90 |
+| rnd1 | 2 | 2 | 24 | 38 | 3.350 ms (1,2,64) | 3.438 | 4.839 | 0.97 | 0.69 |
+| rnd2 | 3 | 3 | 40 | 62 | 5.717 ms (1,2,64), occupancy=4 | 5.919 | 7.926 | 0.97 | 0.72 |
+| rnd3 | 4 | 4 | 60 | 114 | 10.740 ms (1,1,128), occupancy=3 | 10.225 | 16.471 | 1.05 | 0.65 |
+| rnd4 | 2 | 4 | 40 | 73 | 9.284 ms (1,1,128), occupancy=3 | 8.760 | 11.077 | 1.06 | 0.84 |
+| rnd5 | 4 | 2 | 60 | 76 | 12.581 ms (1,2,64), occupancy=4 | 11.447 | 14.535 | 1.10 | 0.87 |
+| rnd6 | 1 | 3 | 60 | 112 | 14.959 ms (1,1,128), occupancy=3 | 13.926 | 15.991 | 1.07 | 0.94 |
+| rnd7 | 3 | 1 | 24 | 25 | 4.126 ms (1,2,64), occupancy=4 | 3.826 | 5.007 | 1.08 | 0.82 |
+
+The DSL beats bricklib's generator on all eight (by 6 to 35 percent) and is
+within 10 percent of the hand-written kernels, the same picture as on the
+paper set. Nothing was tuned per case; the four very wide cases are where
+the measured candidate selection earns its compile time (rnd6 was 20.3 ms
+under the register-budget rule alone).
 
 ### What the generated machine code looks like
 

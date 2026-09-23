@@ -99,7 +99,8 @@ class TilingPass(ModulePass):
         ``occupancy`` hint attached to very wide stencils; also the top of
         the hint ladder :meth:`candidates` ranks (down to ``min_occupancy``).
     min_occupancy : int
-        Lowest occupancy hint the ladder tries before giving up on hints.
+        Lowest occupancy hint the ladder tries; the single 128-wide row is
+        tried at this occupancy.
     wide_inner : int
         Row width (innermost tile dimension) for the wide tier.
     max_inner : int
@@ -116,7 +117,7 @@ class TilingPass(ModulePass):
     narrow_elements_per_thread: int = 2
     wide_elements_per_thread: int = 1
     very_wide_occupancy: int = 4
-    min_occupancy: int = 2
+    min_occupancy: int = 3
     wide_inner: int = 64
     max_inner: int = 1024
 
@@ -162,32 +163,40 @@ class TilingPass(ModulePass):
 
         Narrow stencils have a single configuration.  Wide and very wide
         stencils share a list in opposite orders: the one-element tile
-        without a hint, and a ladder of hinted configurations, the
-        two-element tile at the occupancy target followed by the one-element
+        without a hint, and a ladder of hinted configurations: the
+        two-element tile at the occupancy target, the one-element two-row
         tile at the target and at each lower occupancy down to
         ``min_occupancy`` (a 144-load fused kernel spills at occupancy 4 but
-        fits 164 registers at occupancy 3).  The runtime keeps the first
-        whose compiled kernel fits its budget (see module doc).
+        fits 164 registers at occupancy 3), and the one-element single
+        128-wide row at ``min_occupancy`` (best for product-heavy kernels of
+        100+ loads: 126 registers and 15.0 ms on a 112-load case where the
+        two-row tiles take 15.8-20.3 ms).  The runtime keeps the first that
+        fits its budget, or the fastest measured one (see module doc).
         """
         one_row = self._row_tile(ndim, self.wide_elements_per_thread, self.wide_inner)
+        single_row = self._row_tile(ndim, self.wide_elements_per_thread, 2 * self.wide_inner)
         two_rows = self._row_tile(ndim, self.narrow_elements_per_thread, self.max_inner)
         tier = self.tier(num_loads)
         if tier == "narrow":
             return [(two_rows, {})]
-        ladder = [(two_rows, {"occupancy": self.very_wide_occupancy})] + [
-            (one_row, {"occupancy": occ})
-            for occ in range(self.very_wide_occupancy, self.min_occupancy - 1, -1)
-        ]
+        ladder = [(two_rows, {"occupancy": self.very_wide_occupancy})]
+        ladder += [(one_row, {"occupancy": occ}) for occ in range(self.very_wide_occupancy, self.min_occupancy - 1, -1)]
+        ladder.append((single_row, {"occupancy": self.min_occupancy}))
         unhinted = (one_row, {})
-        if tier == "wide":
-            return [unhinted] + ladder
-        return ladder + [unhinted]
+        ordered = [unhinted] + ladder if tier == "wide" else ladder + [unhinted]
+        seen: list = []
+        for cand in ordered:              # 1D tiles do not depend on the row cap: drop duplicates
+            if cand not in seen:
+                seen.append(cand)
+        return seen
 
     def tile_for(self, ndim: int, num_loads: int) -> list[int]:
         """Row tile for a stencil with *num_loads* accesses (first candidate)."""
         return list(self.candidates(ndim, num_loads)[0][0])
 
     def _row_tile(self, ndim: int, elements_per_thread: int, inner_cap: int) -> tuple[int, ...]:
+        """Row tile of ``threads_per_block * elements_per_thread`` elements whose
+        innermost extent is at most *inner_cap* (the rest goes to rows)."""
         elements = self.threads_per_block * elements_per_thread
         if ndim == 1:
             return (elements * 4,)

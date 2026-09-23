@@ -143,7 +143,9 @@ class TestRowTiles:
 
     def test_compile_emits_occupancy_hint_for_very_wide_stencil(self):
         from wide_stencils import box125
-        result = stencil_compile(box125, temporal_blocking=False)
+        # "probe" keeps the pass's first candidate when it fits; the default
+        # "measure" mode may prefer the two-row tile (6.30 vs 6.43 ms)
+        result = stencil_compile(box125, temporal_blocking=False, select="probe")
         assert result.tile_sizes == (1, 1, 256)
         assert result.kernel_hints == {"occupancy": 4}
         assert "@ct.kernel(occupancy=4)" in result.code
@@ -378,15 +380,16 @@ class TestTileCandidates:
 
     def test_wide_stencil_falls_back_to_the_hinted_ladder(self):
         # one element unhinted first; then the hinted two-element tile; then
-        # one element per thread with decreasing occupancy targets (a
-        # 144-load fused kernel spills under occupancy=4 but fits 164
-        # registers under occupancy=3 and runs 2x faster than unhinted)
+        # one element per thread as two rows at decreasing occupancy targets
+        # and as a single 128-wide row at the lowest one (a 112-load kernel
+        # made of products is fastest there: 126 registers, 15.0 ms, against
+        # 20.3 ms for the two-row tile at occupancy 2)
         assert TilingPass().candidates(3, 27) == [
             ((1, 2, 64), {}),
             ((1, 1, 256), {"occupancy": 4}),
             ((1, 2, 64), {"occupancy": 4}),
             ((1, 2, 64), {"occupancy": 3}),
-            ((1, 2, 64), {"occupancy": 2}),
+            ((1, 1, 128), {"occupancy": 3}),
         ]
 
     def test_very_wide_stencil_tries_hints_first_and_unhinted_last(self):
@@ -394,13 +397,14 @@ class TestTileCandidates:
             ((1, 1, 256), {"occupancy": 4}),
             ((1, 2, 64), {"occupancy": 4}),
             ((1, 2, 64), {"occupancy": 3}),
-            ((1, 2, 64), {"occupancy": 2}),
+            ((1, 1, 128), {"occupancy": 3}),
             ((1, 2, 64), {}),
         ]
 
     def test_occupancy_ladder_is_configurable(self):
         cands = TilingPass(very_wide_occupancy=8, min_occupancy=4).candidates(3, 125)
-        assert [c[1].get("occupancy") for c in cands] == [8, 8, 7, 6, 5, 4, None]
+        assert [c[1].get("occupancy") for c in cands] == [8, 8, 7, 6, 5, 4, 4, None]
+        assert cands[-2][0] == (1, 1, 128)
 
     def test_pass_attaches_the_first_candidate(self):
         from wide_stencils import box27

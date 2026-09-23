@@ -151,6 +151,21 @@ class TestFusedGPU:
         a, b = _pair()
         assert compile_fused([a, b]).validate(atol=1e-12)
 
+    def test_member_with_an_unused_parameter_validates(self):
+        # the launcher takes only the fields a stencil reads, but its Python
+        # reference still has the full parameter list
+        @stencil(ndim=1, order=2)
+        def p(u, unused, i):
+            return u[i - 1] - 2.0 * u[i] + u[i + 1]
+
+        @stencil(ndim=1, order=2)
+        def q(unused, v, i):
+            return 0.5 * v[i + 1]
+
+        r = compile_fused([p, q])
+        assert r.inputs == ("u", "v")
+        assert r.validate(atol=1e-12)
+
     def test_three_field_products_match_the_reference(self):
         @stencil(ndim=3, order=2)
         def flux(m, u, p, i, j, k):

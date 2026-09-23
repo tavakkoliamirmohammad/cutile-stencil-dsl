@@ -93,8 +93,8 @@ class CompileResult:
 
         from cutile.reference.stencil_ref import apply_stencil
 
-        if self._ref_fns:
-            return self._validate_fused(atol)
+        if self._ref_fns and (len(self._ref_fns) > 1 or len(self.inputs) > 1):
+            return self._validate_multi(atol)
         if self._ref_fn is None:
             raise RuntimeError(
                 "No reference function available -- pass a @stencil-decorated "
@@ -131,9 +131,14 @@ class CompileResult:
         print(f"Validation: max_diff={max_diff:.2e}, pass={ok}")
         return ok
 
-    def _validate_fused(self, atol: float) -> bool:
-        """Run the fused kernel once and compare every output with its
-        member stencil evaluated by the NumPy reference on the same inputs."""
+    def _validate_multi(self, atol: float) -> bool:
+        """Run a multi-input or multi-output kernel once and compare every
+        output with its stencil evaluated by the NumPy reference on the same
+        inputs.  The launcher takes only the fields a stencil reads (in
+        ``self.inputs`` order); the Python reference takes the function's
+        full parameter list, so unread parameters get a zero array."""
+        import inspect
+
         import cupy as cp
         import numpy as np
 
@@ -143,17 +148,19 @@ class CompileResult:
         hw = self.halo_widths
         base = 128 if self.ndim == 1 else 64
         shape = tuple(base + 2 * h for h in hw)
-        inputs = {name: np.random.rand(*shape) for name in self.inputs}
+        inputs = {name: np.random.rand(*shape) + 0.5 for name in self.inputs}
         mod = self.load_module()
         launcher = getattr(mod, f"launch_{self.name}")
         gpu_in = [cp.asarray(inputs[n]) for n in self.inputs]
-        gpu_out = [cp.zeros(shape) for _ in self.outputs]
+        gpu_out = [cp.zeros(shape) for _ in self._ref_fns]
         launcher(*gpu_in, *gpu_out)
         cp.cuda.Device().synchronize()
         interior = tuple(slice(h, s - h) for h, s in zip(hw, shape))
         ok = True
-        for fn, names, out in zip(self._ref_fns, self._ref_inputs, gpu_out):
-            ref = array_aware(fn)(*[_ArrayProxy(inputs[n], hw) for n in names], *([0] * self.ndim))
+        for fn, out in zip(self._ref_fns, gpu_out):
+            params = list(inspect.signature(fn).parameters)[: -self.ndim]
+            args = [_ArrayProxy(inputs.get(n, np.zeros(shape)), hw) for n in params]
+            ref = array_aware(fn)(*args, *([0] * self.ndim))
             got = cp.asnumpy(out)[interior]
             max_diff = float(np.max(np.abs(ref - got)))
             good = bool(np.allclose(ref, got, atol=atol))
@@ -229,6 +236,14 @@ class CompileResult:
 # ---------------------------------------------------------------------- #
 
 
+def _input_names(ir) -> tuple:
+    """Array parameter names of the stencil, in launcher order."""
+    from cutile.lowering.stencil_to_target import _arg_names, _func_and_block
+
+    func_op, block = _func_and_block(ir)
+    return tuple(_arg_names(func_op, block))
+
+
 def _num_inputs(ir) -> int:
     """Number of input arrays of the stencil (block arguments of its FuncOp)."""
     from cutile.dialects.cutile_stencil.dialect import FuncOp
@@ -273,19 +288,38 @@ def _budgeted_configs(tiling, candidates):
     ]
 
 
+_SELECT_MODES = ("probe", "measure")
+
+
+def _selection_mode(select, tiling, num_loads) -> str:
+    """``"probe"`` keeps the first candidate whose cubin fits its register
+    budget; ``"measure"`` compiles every candidate and times it on a slab.
+    By default very wide stencils are measured (their best configuration is
+    not predictable from registers alone: a 112-load product kernel runs
+    15.0 ms as a single 128-row at occupancy 3 and 20.3 ms at the first
+    spill-free rung) and everything else is probed."""
+    if select is not None:
+        if select not in _SELECT_MODES:
+            raise ValueError(f"select must be one of {_SELECT_MODES}, got {select!r}")
+        return select
+    return "measure" if tiling.tier(num_loads) == "very_wide" else "probe"
+
+
 def _choose_config(
     candidates, lower, *, kernel_name, ndim, num_inputs, halo_widths, dtype,
-    max_registers=None, num_outputs=1,
+    max_registers=None, num_outputs=1, select="probe",
 ):
-    """Probe *candidates* (``regcheck.Config``) in order and return
-    ``(tile_sizes, kernel_hints, resources)`` of the first that fits.
+    """Probe (and in ``"measure"`` mode time) *candidates* (``regcheck.Config``)
+    and return ``(tile_sizes, kernel_hints, resources)`` of the chosen one.
 
     *lower* turns a configuration into generated source; the probe compiles
-    it the way cuTile will and reads register and stack usage from the cubin.
+    it the way cuTile will, reads register and stack usage from the cubin and,
+    when measuring, times it on :func:`regcheck.timing_shape`.
     """
     from cutile.runtime import regcheck
 
     probed: dict = {}
+    time_shape = regcheck.timing_shape(ndim) if select == "measure" else None
 
     def _probe(cfg):
         code = lower(cfg)
@@ -293,11 +327,15 @@ def _choose_config(
             code=code, kernel_name=kernel_name, ndim=ndim, num_inputs=num_inputs,
             num_outputs=num_outputs, has_consts=("consts," in code),
             tile_sizes=cfg.tile_sizes, halo_widths=halo_widths, dtype=dtype,
+            time_shape=time_shape,
         )
         probed[id(cfg)] = res
         return res
 
-    chosen = regcheck.select_config(candidates, _probe, max_registers=max_registers)
+    if select == "measure":
+        chosen = regcheck.select_fastest(candidates, _probe, max_registers=max_registers)
+    else:
+        chosen = regcheck.select_config(candidates, _probe, max_registers=max_registers)
     return chosen.tile_sizes, dict(chosen.kernel_hints), probed.get(id(chosen))
 
 
@@ -315,6 +353,7 @@ def compile(
     brick_size: int = 32,
     align_halo: bool = True,
     occupancy: int | None = None,
+    select: str | None = None,
 ) -> CompileResult:
     """Compile a ``@stencil``-decorated function through the pipeline.
 
@@ -354,6 +393,12 @@ def compile(
         cuTile ``@ct.kernel(occupancy=...)`` hint: expected resident blocks per
         SM, which bounds the compiler's register budget.  ``None`` lets the
         tiling pass decide (it sets a hint for wide stencils).
+    select
+        How to choose among the tiling pass's candidate configurations:
+        ``"probe"`` keeps the first whose compiled kernel fits its register
+        budget, ``"measure"`` times every candidate on a slab and keeps the
+        fastest.  ``None`` (default) measures very wide stencils and probes
+        the rest.
 
     Returns
     -------
@@ -490,6 +535,7 @@ def compile(
             _budgeted_configs(tiling, candidates), _lower,
             kernel_name=f"{name}_kernel", ndim=len(halo_widths), num_inputs=num_inputs,
             halo_widths=halo_widths, dtype=getattr(stencil_fn, "_dtype", "float64"),
+            select=_selection_mode(select, tiling, num_loads),
         )
 
     # -------------------------------------------------------------- #
@@ -550,7 +596,9 @@ def compile(
         stencil_halo=stencil_halo,
         kernel_hints=kernel_hints,
         resources=resources,
+        inputs=_input_names(ir),
         _ref_fn=stencil_fn._fn,
+        _ref_fns=[stencil_fn._fn],
     )
 
 
@@ -568,6 +616,7 @@ def compile_fused(
     temporal_steps: int = 1,
     occupancy: int | None = None,
     align_halo: bool = True,
+    select: str | None = None,
 ) -> CompileResult:
     """Compile several stencils over one domain into a single fused kernel.
 
@@ -595,6 +644,8 @@ def compile_fused(
         Explicit ``@ct.kernel(occupancy=...)`` hint; disables probing.
     align_halo : bool
         Pad the innermost halo to a 128-byte multiple (default ``True``).
+    select : str | None
+        ``"probe"`` / ``"measure"`` / ``None`` as for :func:`compile`.
     """
     if not stencil_fns:
         raise ValueError("At least one stencil function is required")
@@ -653,6 +704,7 @@ def compile_fused(
             _budgeted_configs(tiling, candidates), _lower,
             kernel_name=f"{meta.name}_kernel", ndim=ndim, num_inputs=len(meta.input_names),
             num_outputs=len(meta.output_names), halo_widths=halo_widths, dtype=dtype,
+            select=_selection_mode(select, tiling, num_loads),
         )
     else:
         tile_sizes, kernel_hints = tuple(candidates[0][0]), dict(candidates[0][1])

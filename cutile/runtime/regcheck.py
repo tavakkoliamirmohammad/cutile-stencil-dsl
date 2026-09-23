@@ -40,10 +40,12 @@ from typing import Callable, Optional, Sequence
 
 @dataclass(frozen=True)
 class Resources:
-    """Per-thread resource usage of a compiled kernel."""
+    """Per-thread resource usage of a compiled kernel, and optionally its
+    measured time per launch on the probe's timing slab (``ms``)."""
 
     registers: int
     stack_bytes: int
+    ms: Optional[float] = None
 
     @property
     def spills(self) -> bool:
@@ -124,6 +126,13 @@ def _capture_cubin(run: Callable[[], None]) -> Optional[bytes]:
     return captured[-1] if captured else None
 
 
+def timing_shape(ndim: int) -> tuple[int, ...]:
+    """Interior extent of the slab kernels are timed on: large enough to
+    fill the GPU for several waves, small enough to allocate and run in
+    milliseconds."""
+    return {1: (1 << 20,), 2: (256, 1024), 3: (32, 64, 256)}[ndim]
+
+
 def probe_resources(
     *,
     code: str,
@@ -135,14 +144,19 @@ def probe_resources(
     tile_sizes: Sequence[int],
     halo_widths: Sequence[int],
     dtype: str = "float64",
+    time_shape: Optional[Sequence[int]] = None,
+    iterations: int = 5,
 ) -> Optional[Resources]:
     """Compile the generated kernel in *code* as cuTile would and report its
-    register and stack usage.
+    register and stack usage, and with *time_shape* also its time per launch.
 
     The generated launcher is run once on small arrays (two tiles per
     dimension plus halo), so the compiler sees the same alignment and stride
-    facts as in real use.  Returns ``None`` when the probe cannot run (no
-    toolkit, no GPU, compile error).  Never raises.
+    facts as in real use.  With *time_shape* (an interior extent, see
+    :func:`timing_shape`) the arrays have that size instead and the launcher
+    is timed over *iterations* launches after two warm-ups.  Returns ``None``
+    when the probe cannot run (no toolkit, no GPU, compile error).  Never
+    raises.
     """
     dump = cuobjdump_path()
     if dump is None:
@@ -160,8 +174,11 @@ def probe_resources(
         launcher = getattr(mod, "launch_" + kernel_name.removesuffix("_kernel"))
 
         cp_dtype = cp.float32 if dtype in ("float32", "fp32") else cp.float64
-        shape = tuple(2 * h + 2 * t for h, t in zip(halo_widths, tile_sizes))
-        arrays = [cp.random.rand(*shape).astype(cp_dtype) for _ in range(num_inputs)]
+        if time_shape is not None:
+            shape = tuple(int(n) + 2 * h for n, h in zip(time_shape, halo_widths))
+        else:
+            shape = tuple(2 * h + 2 * t for h, t in zip(halo_widths, tile_sizes))
+        arrays = [(cp.random.rand(*shape) + 0.5).astype(cp_dtype) for _ in range(num_inputs)]
         outs = [cp.zeros(shape, dtype=cp_dtype) for _ in range(num_outputs)]
 
         def run():
@@ -171,11 +188,26 @@ def probe_resources(
         cubin = _capture_cubin(run)
         if cubin is None:
             return None
+        ms = None
+        if time_shape is not None:
+            for _ in range(2):
+                launcher(*arrays, *outs)
+            cp.cuda.Device().synchronize()
+            start, end = cp.cuda.Event(), cp.cuda.Event()
+            start.record()
+            for _ in range(iterations):
+                launcher(*arrays, *outs)
+            end.record()
+            end.synchronize()
+            ms = cp.cuda.get_elapsed_time(start, end) / iterations
         with tempfile.NamedTemporaryFile("wb", suffix=".cubin", delete=False) as f:
             f.write(cubin)
             cubin_path = f.name
         res = subprocess.run([dump, "-res-usage", cubin_path], capture_output=True, text=True, timeout=120)
-        return parse_res_usage(res.stdout)
+        parsed = parse_res_usage(res.stdout)
+        if parsed is None:
+            return None
+        return Resources(parsed.registers, parsed.stack_bytes, ms)
     except Exception:
         return None
     finally:
@@ -221,6 +253,53 @@ def select_config(
         if not res.spills and (budget is None or res.registers <= budget):
             return cfg
         probed.append((cfg, res))
+    for cfg, res in probed:
+        if not res.spills:
+            return cfg
+    return configs[-1]
+
+
+def _fits(cfg: Config, res: Resources, max_registers: Optional[int]) -> bool:
+    budget = cfg.max_registers if cfg.max_registers is not None else max_registers
+    return not res.spills and (budget is None or res.registers <= budget)
+
+
+def select_fastest(
+    configs: Sequence[Config],
+    probe: Callable[[Config], Optional[Resources]],
+    max_spill_bytes: int = 512,
+    margin: float = 0.03,
+    max_registers: Optional[int] = None,
+) -> Config:
+    """Probe every configuration and return the fastest measured one.
+
+    Configurations whose kernel spills more than *max_spill_bytes* per thread
+    are not trusted even when their slab time looks good; among the rest the
+    earliest candidate within *margin* of the best time wins, so the pass's
+    ranking breaks near-ties.  Without timings (probe returns resources
+    without ``ms``) this degrades to :func:`select_config`'s budget rule; if
+    the probe is unavailable the first configuration is kept.
+    """
+    probed: list[tuple[Config, Resources]] = []
+    for k, cfg in enumerate(configs):
+        res = probe(cfg)
+        if res is None:
+            if k == 0:
+                return cfg
+            continue
+        probed.append((cfg, res))
+    if not probed:
+        return configs[0]
+    timed = [(cfg, res) for cfg, res in probed if res.ms is not None]
+    if timed:
+        trusted = [(cfg, res) for cfg, res in timed if res.stack_bytes <= max_spill_bytes] or timed
+        best = min(res.ms for _, res in trusted)
+        for cfg, res in trusted:
+            if res.ms <= best * (1.0 + margin):
+                return cfg
+    for cfg, res in probed:
+        if _fits(cfg, res, max_registers):
+            return cfg
     for cfg, res in probed:
         if not res.spills:
             return cfg
