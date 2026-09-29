@@ -612,7 +612,7 @@ class TestLowering:
         )
         ast.parse(code)
         assert "range(5)" in code
-        assert "bufs.append" in code
+        assert "_temporal_buffers(u_in, 4)" in code
         assert "bufs[_step]" in code
 
     def test_boundary_generates_periodic_function(self):
@@ -710,7 +710,9 @@ class TestCompileAPI:
             return -u[i - 2] + 16 * u[i - 1] - 30 * u[i] + 16 * u[i + 1] - u[i + 2]
 
         result = stencil_compile(lap4)
-        assert result.halo_widths == (2,)
+        # Footprint is 2; the array halo is padded to a 128-byte multiple.
+        assert result.stencil_halo == (2,)
+        assert result.halo_widths == (16,)
 
     def test_compile_emit_to_file(self, tmp_path):
         @stencil(ndim=1, order=2)

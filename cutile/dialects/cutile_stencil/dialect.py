@@ -184,6 +184,10 @@ class FuncOp(IRDLOperation):
     dtype = opt_prop_def(StringAttr)
     boundary = opt_prop_def(BoundaryAttr)
     constants = opt_prop_def(DictionaryAttr)
+    # Names of the array parameters, in block-argument order.  Stencils are
+    # fused by matching these names, so ``f(mx, u)`` and ``g(u, pres)`` share
+    # ``u`` and read three fields in total.
+    arg_names = opt_prop_def(ArrayAttr)
 
     # -- operands / results --
     inputs = var_operand_def(AnyAttr())
@@ -203,6 +207,7 @@ class FuncOp(IRDLOperation):
         dtype: str | StringAttr | None = None,
         boundary: BoundaryAttr | None = None,
         constants: DictionaryAttr | None = None,
+        arg_names: Sequence[str] | None = None,
         *,
         operands: Sequence[SSAValue | Operation] = (),
     ):
@@ -228,6 +233,8 @@ class FuncOp(IRDLOperation):
             properties["boundary"] = boundary
         if constants is not None:
             properties["constants"] = constants
+        if arg_names is not None:
+            properties["arg_names"] = ArrayAttr([StringAttr(n) for n in arg_names])
 
         super().__init__(
             operands=[list(operands)],
@@ -286,25 +293,25 @@ class AccessOp(IRDLOperation):
 
     def print(self, printer) -> None:  # type: ignore[override]
         """Print a compact form: ``cutile_stencil.access %field [-1, 0] : f64``."""
-        printer.print(" ")
+        printer.print_string(" ")
         printer.print_operand(self.field)
-        printer.print(" ")
+        printer.print_string(" ")
 
         # Offset as [d0, d1, …]
         offsets = [int(idx.data) for idx in self.offset.parameters[0].data]
-        printer.print("[")
-        printer.print(", ".join(str(o) for o in offsets))
-        printer.print("]")
+        printer.print_string("[")
+        printer.print_string(", ".join(str(o) for o in offsets))
+        printer.print_string("]")
 
         # Optional index names
         if self.index_names is not None:
             names = [a.data for a in self.index_names]
-            printer.print(" {")
-            printer.print(", ".join(f'"{n}"' for n in names))
-            printer.print("}")
+            printer.print_string(" {")
+            printer.print_string(", ".join(f'"{n}"' for n in names))
+            printer.print_string("}")
 
         # Result type
-        printer.print(" : ")
+        printer.print_string(" : ")
         printer.print_attribute(self.res.type)
 
 

@@ -14,8 +14,7 @@ import json
 import math
 import os
 import tempfile
-from dataclasses import dataclass, asdict
-from itertools import product as iterproduct
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Optional
 
@@ -29,6 +28,8 @@ class AutotuneResult:
     throughput_gpoints: float
     bandwidth_gbs: float
     time_ms: float = 0.0
+    # ``@ct.kernel`` keyword arguments the winning kernel was compiled with.
+    kernel_hints: dict = field(default_factory=dict)
 
 
 # ------------------------------------------------------------------ #
@@ -38,8 +39,11 @@ class AutotuneResult:
 _CACHE_DIR = Path.home() / ".cache" / "cutile" / "autotune"
 
 
+_CACHE_VERSION = "v3"  # bump when the candidate space changes
+
+
 def _cache_key(name: str, ndim: int, halo: tuple[int, ...], gpu: str) -> str:
-    raw = f"{name}|{ndim}|{halo}|{gpu}"
+    raw = f"{_CACHE_VERSION}|{name}|{ndim}|{halo}|{gpu}"
     return hashlib.md5(raw.encode()).hexdigest()
 
 
@@ -63,9 +67,22 @@ def _save_cache(key: str, result: AutotuneResult) -> None:
 # Candidate generation
 # ------------------------------------------------------------------ #
 
-_TILE_CANDIDATES_1D = [32, 64, 128, 256, 512]
-_TILE_CANDIDATES_2D = [8, 16, 32, 64, 128]
-_TILE_CANDIDATES_3D = [4, 8, 16, 32]
+# Row-shaped tiles: the innermost dimension spans a whole row and the outer
+# dimensions stay small.  Near-cubic tiles are several times slower in cuTile
+# because every stencil access loads a full tile.
+_TILE_CANDIDATES_1D = [(256,), (512,), (1024,), (2048,), (4096,)]
+_TILE_CANDIDATES_2D = [
+    (o, i) for o in (1, 2, 4, 8) for i in (64, 128, 256, 512, 1024, 2048)
+]
+_TILE_CANDIDATES_3D = [
+    (a, b, i) for a in (1, 2, 4) for b in (1, 2, 4, 8) for i in (64, 128, 256, 512, 1024)
+]
+
+
+# cuTile runs 128 threads per block; the occupancy hint only ever helps at
+# two or more elements per thread (at one it makes tileiras spill).
+_THREADS_PER_BLOCK = 128
+_OCCUPANCY_HINT = 4
 
 
 def _generate_candidates(
@@ -74,45 +91,50 @@ def _generate_candidates(
     shared_mem: int = 49152,
     dtype_bytes: int = 8,
     max_temporal: int = 8,
-) -> list[tuple[tuple[int, ...], int]]:
-    """Generate (tile_sizes, temporal_steps) candidates that fit in shared memory."""
+) -> list[tuple[tuple[int, ...], int, dict]]:
+    """Generate (tile_sizes, temporal_steps, kernel_hints) candidates.
+
+    Only ``temporal_steps == 1`` is generated: a temporal launch is ``T``
+    back-to-back sweeps, so it can never beat a single sweep on the
+    per-launch time the benchmark measures.  ``max_temporal`` is accepted
+    for API compatibility.  Tiles with at least two elements per thread are
+    tried both plain and with ``@ct.kernel(occupancy=4)``, which bounds the
+    compiler's register budget (a 125-point stencil goes 9.4 -> 6.4 ms).
+    """
+    del max_temporal  # temporal depth is not a tuning knob for cuTile launches
 
     if ndim == 1:
-        widths = _TILE_CANDIDATES_1D
+        shapes = _TILE_CANDIDATES_1D
     elif ndim == 2:
-        widths = _TILE_CANDIDATES_2D
+        shapes = _TILE_CANDIDATES_2D
     else:
-        widths = _TILE_CANDIDATES_3D
+        shapes = _TILE_CANDIDATES_3D
 
-    # Count loads: 2*ndim neighbors + possibly center = conservative upper bound
-    num_loads = 2 * ndim + 1  # overestimate is safe
-
-    candidates: list[tuple[tuple[int, ...], int]] = []
-
-    for combo in iterproduct(widths, repeat=ndim):
-        for T in range(max_temporal, 0, -1):
-            expanded = tuple(c + 2 * T * h for c, h in zip(combo, halo))
-            prod_expanded = math.prod(expanded)
-            prod_tile = math.prod(combo)
-
-            smem = (num_loads * prod_expanded + prod_tile) * dtype_bytes
-            if smem > shared_mem:
-                continue
-
-            candidates.append((combo, T))
-            break  # best T for this tile combo
-
-    # Also add T=1 for all tiles (no temporal blocking)
-    for combo in iterproduct(widths, repeat=ndim):
-        expanded = tuple(c + 2 * h for c, h in zip(combo, halo))
-        prod_expanded = math.prod(expanded)
-        prod_tile = math.prod(combo)
-        smem = (num_loads * prod_expanded + prod_tile) * dtype_bytes
-        if smem <= shared_mem:
-            if (combo, 1) not in candidates:
-                candidates.append((combo, 1))
-
+    # cuTile loads exactly the tile per access (no halo-expanded tile), so
+    # prune on input + output staging only; the benchmark decides the rest.
+    candidates: list[tuple[tuple[int, ...], int, dict]] = []
+    for tile in shapes:
+        if 2 * math.prod(tile) * dtype_bytes > shared_mem:
+            continue
+        candidates.append((tile, 1, {}))
+        if math.prod(tile) >= 2 * _THREADS_PER_BLOCK:
+            candidates.append((tile, 1, {"occupancy": _OCCUPANCY_HINT}))
     return candidates
+
+
+def _prioritize(candidates: list, max_candidates: int) -> list:
+    """Keep the *max_candidates* most promising candidates.
+
+    Every stencil measured so far wins with 128-512 element tiles (one to
+    four elements per 128-thread block), so candidates are ranked by how
+    close their element count is to 256; a hinted variant ranks just after
+    the plain tiles of its own size and before the next size out.
+    """
+    def rank(x):
+        tile, _, hints = x
+        return (abs(math.log2(math.prod(tile)) - 8) + (0.75 if hints else 0.0), math.prod(tile), tile)
+
+    return sorted(candidates, key=rank)[:max_candidates]
 
 
 # ------------------------------------------------------------------ #
@@ -128,6 +150,7 @@ def _benchmark_candidate(
     domain: tuple[int, ...],
     warmup: int = 10,
     iters: int = 30,
+    kernel_hints: dict | None = None,
 ) -> Optional[float]:
     """Benchmark a single candidate on GPU. Returns time in ms or None."""
     import cupy as cp
@@ -139,6 +162,7 @@ def _benchmark_candidate(
             tile_sizes=tile_sizes,
             halo_widths=halo,
             temporal_steps=temporal_steps,
+            kernel_hints=kernel_hints,
         )
         ast.parse(code)
 
@@ -238,11 +262,7 @@ def autotune(
         dtype_bytes=hw.dtype_bytes,
     )
 
-    # Limit candidates
-    if len(candidates) > max_candidates:
-        # Prioritize: diverse tile sizes, prefer larger temporal steps
-        candidates.sort(key=lambda x: (x[1], math.prod(x[0])), reverse=True)
-        candidates = candidates[:max_candidates]
+    candidates = _prioritize(candidates, max_candidates)
 
     if verbose:
         print(f"autotune: testing {len(candidates)} candidates for {name} ({ndim}D, halo={halo})")
@@ -251,16 +271,18 @@ def autotune(
     best_ms = float("inf")
     best_tile = (32,) * ndim
     best_T = 1
+    best_hints: dict = {}
 
-    for tile, T in candidates:
-        ms = _benchmark_candidate(stencil_fn, tile, halo, T, domain, warmup, iters)
+    for tile, T, hints in candidates:
+        ms = _benchmark_candidate(stencil_fn, tile, halo, T, domain, warmup, iters, kernel_hints=hints)
         if ms is not None and ms < best_ms:
             best_ms = ms
             best_tile = tile
             best_T = T
+            best_hints = dict(hints)
             if verbose:
                 tile_str = "x".join(str(t) for t in tile)
-                print(f"  {tile_str} T={T}: {ms:.4f} ms {'*best*' if ms == best_ms else ''}")
+                print(f"  {tile_str} T={T} {hints}: {ms:.4f} ms *best*")
 
     # Compute throughput
     npoints = math.prod(domain)
@@ -274,6 +296,7 @@ def autotune(
         throughput_gpoints=throughput,
         bandwidth_gbs=bandwidth,
         time_ms=best_ms,
+        kernel_hints=best_hints,
     )
 
     # Cache result

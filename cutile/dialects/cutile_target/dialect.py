@@ -42,6 +42,18 @@ class KernelOp(IRDLOperation):
     - ``expression``: the arithmetic expression string (e.g. ``"0.25 * ..."``)
       emitted as ``result = <expression>`` inside the kernel body.
     - ``constants``: captured constants from the stencil definition scope.
+    - ``grid_order``: array dimensions in block-index order, e.g. ``[1, 0, 2]``
+      means ``bid(0)`` walks dim 1 (rows), ``bid(1)`` dim 0 (planes) and
+      ``bid(2)`` dim 2.  Absent means natural order.
+    - ``kernel_constants``: float64 constants (as repr strings) the kernel
+      receives through a ``consts`` device array and binds to ``_c0``,
+      ``_c1``, ... because cuTile rounds Python float scalars to float32.
+    - ``kernel_hints``: ``[key, value, ...]`` strings emitted as keyword
+      arguments of the ``@ct.kernel`` decorator (e.g. ``occupancy``).
+    - ``expressions`` / ``output_names``: for a fused kernel with several
+      outputs, one expression per output (``expression`` holds the first)
+      and the stencil names the outputs belong to.  The body then has one
+      output block argument, slice chain and ``StoreOp`` per output.
     """
 
     name = "cutile.kernel"
@@ -54,6 +66,11 @@ class KernelOp(IRDLOperation):
     input_names = opt_prop_def(ArrayAttr)
     expression = opt_prop_def(StringAttr)
     constants = opt_prop_def(ArrayAttr)
+    grid_order = opt_prop_def(ArrayAttr)
+    kernel_constants = opt_prop_def(ArrayAttr)
+    kernel_hints = opt_prop_def(ArrayAttr)
+    expressions = opt_prop_def(ArrayAttr)
+    output_names = opt_prop_def(ArrayAttr)
 
     params = var_operand_def()
     body = region_def()

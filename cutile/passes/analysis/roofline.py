@@ -71,6 +71,10 @@ class RooflinePass(ModulePass):
                 flops += 1
             elif isinstance(child, arith.DivfOp):
                 flops += 1
+            elif isinstance(child, (arith.MaximumfOp, arith.MinimumfOp, arith.SelectOp)):
+                flops += 1
+            elif type(child).__name__ == "AbsFOp":
+                flops += 1
             # arith.negf and arith.constant are free.
 
             # Collect unique loads.

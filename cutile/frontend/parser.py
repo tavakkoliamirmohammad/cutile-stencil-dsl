@@ -13,6 +13,7 @@ import textwrap
 from typing import Any
 
 from xdsl.dialects import arith
+from xdsl.dialects import math
 from xdsl.dialects.builtin import (
     ArrayAttr,
     DictionaryAttr,
@@ -244,10 +245,55 @@ class _ExprBuilder:
             return self._build_access(node)
         if isinstance(node, ast.Name):
             return self._build_name(node)
+        if isinstance(node, ast.Call):
+            return self._build_call(node)
+        if isinstance(node, ast.Compare):
+            return self._build_compare(node)
         raise _ParseError(
             f"Unsupported expression node: {type(node).__name__} "
             f"({ast.dump(node)})"
         )
+
+    # Element-wise functions understood in a stencil body.  ``max``/``min``/
+    # ``abs`` are the Python builtins (the NumPy reference executor makes them
+    # array-aware); ``where(cond, a, b)`` is ``cutile.where``.
+    _BINARY_CALLS = {"max": arith.MaximumfOp, "maximum": arith.MaximumfOp,
+                     "min": arith.MinimumfOp, "minimum": arith.MinimumfOp}
+    _COMPARE_OPS = {ast.Gt: "ogt", ast.GtE: "oge", ast.Lt: "olt",
+                    ast.LtE: "ole", ast.Eq: "oeq", ast.NotEq: "une"}
+
+    def _build_call(self, node: ast.Call) -> SSAValue:
+        func = node.func
+        fname = func.id if isinstance(func, ast.Name) else (
+            func.attr if isinstance(func, ast.Attribute) else None)
+        if node.keywords or fname is None:
+            raise _ParseError(f"Unsupported call: {ast.dump(node)}")
+        if fname in self._BINARY_CALLS and len(node.args) == 2:
+            op = self._BINARY_CALLS[fname](self.build(node.args[0]), self.build(node.args[1]))
+        elif fname in ("abs", "fabs") and len(node.args) == 1:
+            op = math.AbsFOp(self.build(node.args[0]))
+        elif fname == "where" and len(node.args) == 3:
+            cond = self.build(node.args[0])
+            op = arith.SelectOp(cond, self.build(node.args[1]), self.build(node.args[2]))
+        else:
+            raise _ParseError(
+                f"Unsupported call '{fname}' with {len(node.args)} argument(s); "
+                f"supported: max(a, b), min(a, b), abs(x), where(cond, a, b)"
+            )
+        self._attach_loc(op, node)
+        self.block.add_op(op)
+        return op.result
+
+    def _build_compare(self, node: ast.Compare) -> SSAValue:
+        if len(node.ops) != 1 or len(node.comparators) != 1:
+            raise _ParseError("Unsupported chained comparison")
+        pred = self._COMPARE_OPS.get(type(node.ops[0]))
+        if pred is None:
+            raise _ParseError(f"Unsupported comparison: {type(node.ops[0]).__name__}")
+        op = arith.CmpfOp(self.build(node.left), self.build(node.comparators[0]), pred)
+        self._attach_loc(op, node)
+        self.block.add_op(op)
+        return op.result
 
     def _build_binop(self, node: ast.BinOp) -> SSAValue:
         left = self.build(node.left)
@@ -600,6 +646,7 @@ def parse_stencil(
         dtype=dtype,
         boundary=boundary_attr,
         constants=constants_attr if all_constants else None,
+        arg_names=array_params,
     )
 
     # Attach source location to FuncOp

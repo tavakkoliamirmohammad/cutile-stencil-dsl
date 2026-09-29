@@ -233,7 +233,7 @@ class TestTemporalBlocking:
         )
         _assert_valid_python(code)
         assert "range(5)" in code
-        assert "bufs.append" in code
+        assert "_temporal_buffers(u_in, 4)" in code
         assert "bufs[_step]" in code
         assert "bufs[_step + 1]" in code
 
