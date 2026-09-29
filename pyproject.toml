@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cutile-stencil"
-version = "0.2.0"
+version = "0.3.0"
 description = "An xDSL-based stencil compiler that generates optimized GPU kernels via NVIDIA cuTile"
 readme = "README.md"
 license = "MIT"
